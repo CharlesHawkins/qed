@@ -6,9 +6,9 @@
 
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
-const char *addr_chars = "0123456789,;.&+- ";
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW";
 char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET", "INSERT", "JAM INTO", "KILL", "LOAD", "MODIFY", "PRINT", "QUICK", "READ FROM", "SUBSTITUTE", "TABS", "VERBOSE", "WRITE ON"};
+const int cmd_args[26] = {0, 2, 1, 0, 1, 0, 0, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 2, 2, 0, 0, 2};
 const char *cmd_noconf = "\"/=^<\n\r";
 const int BUF_INCREMENT = 30;
 
@@ -32,10 +32,12 @@ void get_string(char **str, int *length, char delim, int full, int unlimited);
 struct command_spec* qed_getline();
 int increase_buffer(char **buffer, size_t *size);
 struct line_spec *new_line_spec(char sign, char type, int line, char *search);
+void free_line_spec(struct line_spec *ls);
 void free_command_spec(struct command_spec *cmd);
 int main(int argc, char **argv)
 {
 	struct command_spec *command;
+	struct line_spec *ls;
 	int finished = 0;
 	struct termios qed_term_settings;
 	struct termios original_term_settings;
@@ -50,6 +52,23 @@ int main(int argc, char **argv)
 		if(command != NULL)
 		{
 			/* TODO: Actually do the command */
+			printf("\r\nCommand: %c", command->command);
+			for(ls = command->start; ls; ls = ls->next)
+			{
+				printf("\r\nAddress Element");
+				printf("\r\n\tSign: %c",ls->sign);
+				printf("\r\n\tType: %c",ls->type);
+				printf("\r\n\tLine Number or String Length: %i", ls->line);
+				printf("\r\n\tSearch: \"%s\"", ls->search?ls->search:"");
+			}
+			for(ls = command->end; ls; ls = ls->next)
+			{
+				printf("\r\nAddress Element");
+				printf("\r\n\tSign: %c",ls->sign);
+				printf("\r\n\tType: %c",ls->type);
+				printf("\r\n\tLine Number or String Length: %i", ls->line);
+				printf("\r\n\tSearch: \"%s\"", ls->search?ls->search:"");
+			}
 			finished = (command->command == 'F');
 			free_command_spec(command);
 		}
@@ -105,6 +124,10 @@ void free_line_spec(struct line_spec *ls)
 	if(ls->next)
 	{
 		free_line_spec(ls->next);
+	}
+	if(ls->search)
+	{
+		free(ls->search);
 	}
 	free(ls);
 }
@@ -341,6 +364,20 @@ struct command_spec* qed_getline()
 			compound_valid = 1;
 			cmd_valid = 1;
 		}
+		else if(c == ',')
+		{
+			if(*line == NULL || !compound_valid || second_addr)
+			{
+				free_command_spec(command);
+				return NULL;
+			}
+			line = &(command->end);
+			cmd_valid = 0;
+			compound_valid = 0;
+			second_addr = 1;
+			rel_valid = 1;
+			printf("%c",c);
+		}
 		else if((cmd_char_ptr = strchr(cmd_chars, c)))
 		/* Received a command character */
 		{
@@ -352,6 +389,12 @@ struct command_spec* qed_getline()
 				return NULL;
 			}
 			cmd_char_index = (int)(cmd_char_ptr - cmd_chars);
+			if((command->start != NULL) + (command->end != NULL) > cmd_args[cmd_char_index])
+			/* Too many arguments for command */
+			{
+				free_command_spec(command);
+				return NULL;
+			}
 			cmd_str = cmd_strings[cmd_char_index];
 	 		printf("%s", cmd_str);
 			done = 1;
