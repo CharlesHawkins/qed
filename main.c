@@ -8,7 +8,7 @@ const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW";
 char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET", "INSERT", "JAM INTO", "KILL", "LOAD", "MODIFY", "PRINT", "QUICK", "READ FROM", "SUBSTITUTE", "TABS", "VERBOSE", "WRITE ON"};
-const int cmd_args[26] = {0, 2, 1, 0, 1, 0, 0, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 2, 2, 0, 0, 2};
+const int cmd_addrs[26] = {0, 2, 1, 0, 1, 0, 0, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2};
 const char *cmd_noconf = "\"/=^<\n\r";
 const int BUF_INCREMENT = 30;
 
@@ -389,8 +389,8 @@ struct command_spec* qed_getline()
 				return NULL;
 			}
 			cmd_char_index = (int)(cmd_char_ptr - cmd_chars);
-			if((command->start != NULL) + (command->end != NULL) > cmd_args[cmd_char_index])
-			/* Too many arguments for command */
+			if((command->start != NULL) + (command->end != NULL) > cmd_addrs[cmd_char_index])
+			/* Too many address lines for command */
 			{
 				free_command_spec(command);
 				return NULL;
