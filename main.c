@@ -516,13 +516,7 @@ struct command_spec* qed_getline()
 						return NULL;
 					}
 					get_string(&(command->arg1), NULL, c, 0, 1);
-					printf(" FOR ");
-					do
-					{
-						scanf("%c",&c);
-						printf("%c",c);
-						if(c == '\n') {printf("\\r");}
-					} while(c == ' ' || c == '\t' || c == '\n');
+					printf(" FOR %c", c);
 					get_string(&(command->arg2), NULL, c, 0, 1);
 				}
 				scanf("%c",&c);
