@@ -8,10 +8,16 @@ const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW";
 char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "};
-const int cmd_addrs[26] = {0, 2, 1, 0, 1, 0, 0, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2};
+const int cmd_addrs[26] = {0, 2, 1, 0, 1, 2, 2, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2};
 const char *cmd_noconf = "\"/=^<\n\r";
+const char *cmd_noaddr = "\"BFJKQTV";
 const int BUF_INCREMENT = 30;
 
+struct state_spec {
+	char **main_buffer;
+	int dot;
+	int dollar;
+};
 struct command_spec {
 	struct line_spec *start;
 	struct line_spec *end;
@@ -36,6 +42,8 @@ char get_flags(struct command_spec *command);
 void get_buffer_name(struct command_spec *command);
 void get_string(char **str, int *length, char delim, int full, int unlimited);
 struct command_spec* qed_getline();
+int resolve_line_spec(struct line_spec *line, struct state_spec *state);
+int execute_command(struct command_spec *command, struct state_spec *state);
 int increase_buffer(char **buffer, size_t *size);
 struct line_spec *new_line_spec(char sign, char type, int line, char *search);
 void free_line_spec(struct line_spec *ls);
@@ -43,6 +51,7 @@ void free_command_spec(struct command_spec *cmd);
 int main(int argc, char **argv)
 {
 	struct command_spec *command;
+	struct state_spec *state;
 	struct line_spec *ls;
 	int finished = 0;
 	struct termios qed_term_settings;
@@ -51,45 +60,25 @@ int main(int argc, char **argv)
 	qed_term_settings = original_term_settings;
 	cfmakeraw(&qed_term_settings);
 	tcsetattr(fileno(stdin), TCSANOW, &qed_term_settings);
+	setbuf(stdout,NULL);
 
+	state = malloc(sizeof(struct state_spec));
+	state->main_buffer = calloc(sizeof(int*), 1);
+	state->dollar = 0;
+	state->dot = 0;
 	do
 	{
 		command = qed_getline();
 		if(command != NULL)
 		{
-			/* TODO: Actually do the command */
-			printf("\r\nCommand: %c", command->command);
-			for(ls = command->start; ls; ls = ls->next)
-			{
-				printf("\r\nAddress Element");
-				printf("\r\n\tSign: %c",ls->sign);
-				printf("\r\n\tType: %c",ls->type);
-				printf("\r\n\tLine Number or String Length: %i", ls->line);
-				printf("\r\n\tSearch: \"%s\"", ls->search?ls->search:"");
-			}
-			for(ls = command->end; ls; ls = ls->next)
-			{
-				printf("\r\nAddress Element");
-				printf("\r\n\tSign: %c",ls->sign);
-				printf("\r\n\tType: %c",ls->type);
-				printf("\r\n\tLine Number or String Length: %i", ls->line);
-				printf("\r\n\tSearch: \"%s\"", ls->search?ls->search:"");
-			}
-			if(command->arg1) {printf("\r\nArgument: \"%s\"", command->arg1);}
-			if(command->arg2) {printf("\r\nArgument: \"%s\"", command->arg2);}
-			if(command->command == 'S')
-			{
-				printf("\r\nFlag: %c", command->flag);
-				printf("\r\nNum: %i", command->num);
-			}
-			finished = (command->command == 'F');
+			finished = execute_command(command, state);
 			free_command_spec(command);
 		}
 		else
 		{
 			err();
+			printf("\r\n");
 		}
-		printf("\r\n");
 	} while(!finished);
 
 	tcsetattr(fileno(stdin), TCSANOW, &original_term_settings);
@@ -198,7 +187,8 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 			*line = realloc(*line, *buf_size);
 			(*line)[*length] = c;
 			*length = *length+1;
-			printf("%c", c);
+			if(c != 0x04)
+				printf("%c", c);
 		}
 	}
 	else
@@ -325,7 +315,19 @@ void get_string(char **str, int *length, char delim, int full, int unlimited)
 				}
 				else if(full)
 				{
+					if(c == 0x04)
+					{
+						printf("\r\n");
+						stop = 1;
+					}
+					else if(c == '\r')
+					{
+						printf("\n");
+						stop = 1;
+					}
+					fflush(stdin);
 					add_char_to_buffer(str, length, &buf_size, c, unlimited);
+					fflush(stdin);
 				}
 				else
 				{
@@ -403,7 +405,7 @@ struct command_spec* qed_getline()
 			compound_valid = 0;
 			printf("%c",c);
 		}
-		else if(c == '.' || c == '&')
+		else if(c == '.' || c == '$')
 		{
 			cmd_valid = 1;
 			compound_valid = 1;
@@ -503,7 +505,7 @@ struct command_spec* qed_getline()
 					{
 						scanf("%c",&c);
 						printf("%c",c);
-						if(c == '\n') {printf("\\r");}
+						if(c == '\n') {printf("\r");}
 					} while(c == ' ' || c == '\t' || c == '\n');
 					get_string(&(command->arg1), NULL, c, 0, 1);
 				}
@@ -532,4 +534,136 @@ struct command_spec* qed_getline()
 		else {printf("%c", 0x07);}
 	} while(!done);
 	return command;
+}
+int resolve_line_spec(struct line_spec *line, struct state_spec *state)
+{
+	int line_number = 0;
+	if(!state || !(state->main_buffer))
+	{
+		return -1;
+	}
+	while(line)
+	{
+		switch(line->type)
+		{
+			case 'n':
+			line_number = line->sign == '-'?line_number-line->line:line_number+line->line;
+			break;
+
+			case '.':
+			line_number += state->dot;
+			break;
+			case '$':
+			line_number += state->dollar;
+			break;
+			default:
+			return -1;
+		}
+		line = line->next;
+	}
+	if(line_number < 0)
+		return 1;
+	else if(line_number > state->dollar)
+		return -1;
+	else
+		return line_number;
+}
+int execute_command(struct command_spec *command, struct state_spec *state)
+{
+	int line1 = state->dot, line2 = state->dot;
+	char *sep = "\r";
+	if(command->start)
+	{
+		line1 = resolve_line_spec(command->start, state);
+		if(line1 == -1)
+		{
+			err();
+			return 0;
+		}
+	}
+	if(line1 == 0 && command->command != 'A' && command->command != '=')
+		line1 = 1;
+	line2 = line1;
+	if(command->end)
+	{
+		line2 = resolve_line_spec(command->end, state);
+		if(line2 == -1)
+		{
+			err();
+			return 0;
+		}
+	}
+	if(line2 == 0 && command->command != 'A' && command->command != '=')
+		line2 = 1;
+ 	if(command->command == '\n' && !command->start) 
+		line2 = ++line1;
+	if(!strchr(cmd_noaddr, command->command) && (line2 < line1 || line2 > state->dollar))
+	{
+		err();
+		return 0;
+	}
+	if(command->command != '=' && command->command != '<' && command->command != '\n')
+		printf("\r\n");
+	switch(command->command)
+	{
+		int i, length, done = 0;
+		char c;
+		char *buffer;
+	case '=':
+		printf("%i\r\n", line1);
+		break;
+	case 'P':
+		printf("\r\nDOUBLE? ");
+		scanf("%c", &c);
+		c = convert_esc(c);
+		printf("%c\r\n",c);
+		if(c == 'Y')
+			sep = "\r\n\r";
+		else if(c == 'N')
+			sep = "\r";
+		else
+		{
+			err();
+			return 0;
+		}
+	/* Intentional fallthrough */
+	case '/':
+	case '\n':
+		for(i=line1; i<=line2; i++)
+		{
+			printf("%i: %s%s", i, state->main_buffer[i], sep);
+		}
+		state->dot = line2;
+		break;
+	case 'I':
+		line1--;
+		/* Intentional Fallthrough */
+	case 'A':
+		done = 0;
+		do {
+			get_string(&buffer, &length, '\0', 1, 1);
+			if(buffer[length-2] == 0x04)
+				done = 1;
+			if(buffer[0] != 0x04)
+			{
+				state->dot = ++line1;
+				buffer[length-2] = '\n';
+				state->main_buffer = realloc(state->main_buffer, sizeof(int*) * (state->dollar+2));
+				for(i = state->dollar; i>=line1; i--)
+				{
+					state->main_buffer[i+1] = state->main_buffer[i];
+				}
+				state->main_buffer[line1] = buffer;
+				state->dollar = state->dollar+1;
+			}
+			else
+				free(buffer);
+		} while(!done);
+		break;
+	case 'F':
+			return 1;
+	default:
+		printf("[not implemented yet]\r\n");
+	}
+	return 0;
 }
