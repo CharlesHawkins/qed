@@ -7,7 +7,7 @@
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW";
-char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET", "INSERT", "JAM INTO", "KILL", "LOAD", "MODIFY", "PRINT", "QUICK", "READ FROM", "SUBSTITUTE", "TABS", "VERBOSE", "WRITE ON"};
+char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "};
 const int cmd_addrs[26] = {0, 2, 1, 0, 1, 0, 0, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2};
 const char *cmd_noconf = "\"/=^<\n\r";
 const int BUF_INCREMENT = 30;
@@ -16,6 +16,10 @@ struct command_spec {
 	struct line_spec *start;
 	struct line_spec *end;
 	char command;
+	char *arg1;
+	char *arg2;
+	char flag;
+	int num;
 };
 
 struct line_spec {
@@ -28,6 +32,8 @@ struct line_spec {
 void err();
 char convert_esc(char c);
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited);
+char get_flags(struct command_spec *command);
+void get_buffer_name(struct command_spec *command);
 void get_string(char **str, int *length, char delim, int full, int unlimited);
 struct command_spec* qed_getline();
 int increase_buffer(char **buffer, size_t *size);
@@ -68,6 +74,13 @@ int main(int argc, char **argv)
 				printf("\r\n\tType: %c",ls->type);
 				printf("\r\n\tLine Number or String Length: %i", ls->line);
 				printf("\r\n\tSearch: \"%s\"", ls->search?ls->search:"");
+			}
+			if(command->arg1) {printf("\r\nArgument: \"%s\"", command->arg1);}
+			if(command->arg2) {printf("\r\nArgument: \"%s\"", command->arg2);}
+			if(command->command == 'S')
+			{
+				printf("\r\nFlag: %c", command->flag);
+				printf("\r\nNum: %i", command->num);
 			}
 			finished = (command->command == 'F');
 			free_command_spec(command);
@@ -152,6 +165,14 @@ void free_command_spec(struct command_spec *cmd)
 	{
 		free_line_spec(cmd->end);
 	}
+	if(cmd->arg1)
+	{
+		free(cmd->arg1);
+	}
+	if(cmd->arg2)
+	{
+		free(cmd->arg2);
+	}
 	free(cmd);
 }
 int increase_buffer(char **buffer, size_t *size)
@@ -187,12 +208,74 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 		printf("%c", c);
 	}
 }
+char get_flags(struct command_spec *command)
+{
+	char c;
+	do{
+		scanf("%c",&c);
+		c = convert_esc(c);
+		printf("%c",c);
+	} while(c == ' ' || c == '\t');
+	while(c == ':')
+	{
+		int n = 0;
+		int digit = 0;
+		scanf("%c",&c);
+		c = convert_esc(c);
+		while(c >= '0' && c <= '9')
+		{
+			digit = 1;
+			printf("%c",c);
+			n = n * 10 + c - '0';
+			command->num = n;
+			scanf("%c",&c);
+			c = convert_esc(c);
+		}
+		if(!digit)
+		{
+			if(c == 'G' || c == 'W' || c == 'L' || c == 'V')
+			{
+				printf("%c",c);
+				command->flag = c;
+				do{
+					scanf("%c",&c);
+					c = convert_esc(c);
+					printf("%c",c);
+				} while(c == ' ' || c == '\t');
+			}
+			else
+			{
+				return '\0';
+			}
+		}
+		else
+		{
+			printf("%c",c);
+		}
+	}
+	return c;
+}
+void get_buffer_name(struct command_spec *command)
+{
+	char c;
+	scanf("%c",&c);
+	c = convert_esc(c);
+	if((c>= '0' && c <= '9') || (c >= 'A' && c <= 'Z'))
+	{
+		printf("%c",c);
+		command->arg1 = malloc(2);
+		command->arg1[0] = c;
+		command->arg1[1] = '\0';
+	}
+}
 void get_string(char **str, int *length, char delim, int full, int unlimited)
 {
 	char c;
 	int newstr = 1;
 	int stop = 0;
 	int buf_size = BUF_INCREMENT;
+	int my_length;
+	if(!length) {length = &my_length;}
 	*str = malloc(buf_size+1);
 	*length = 0;
 	do
@@ -267,6 +350,10 @@ struct command_spec* qed_getline()
 	command = malloc(sizeof(struct command_spec));
 	command->start = NULL;
 	command->end = NULL;
+	command->arg1 = NULL;
+	command->arg2 = NULL;
+	command->flag = 'G';
+	command->num = -1;
 	line = &(command->start);
 	printf("*");
 	do
@@ -401,6 +488,43 @@ struct command_spec* qed_getline()
 			command->command = c;
 			if(!strchr(cmd_noconf, c))
 			{
+				if(c == 'B' || c == 'G' || c == 'J' || c == 'K' || c == 'L')
+				{
+					get_buffer_name(command);
+					if(!command->arg1)
+					{
+						free_command_spec(command);
+						return NULL;
+					}
+				}
+				if(c == 'R' || c == 'W')
+				{
+					do
+					{
+						scanf("%c",&c);
+						printf("%c",c);
+						if(c == '\n') {printf("\\r");}
+					} while(c == ' ' || c == '\t' || c == '\n');
+					get_string(&(command->arg1), NULL, c, 0, 1);
+				}
+				else if(c == 'S')
+				{
+					c = get_flags(command);
+					if(!c)
+					{
+						free_command_spec(command);
+						return NULL;
+					}
+					get_string(&(command->arg1), NULL, c, 0, 1);
+					printf(" FOR ");
+					do
+					{
+						scanf("%c",&c);
+						printf("%c",c);
+						if(c == '\n') {printf("\\r");}
+					} while(c == ' ' || c == '\t' || c == '\n');
+					get_string(&(command->arg2), NULL, c, 0, 1);
+				}
 				scanf("%c",&c);
 				c = convert_esc(c);
 				if(c != '.')
