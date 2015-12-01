@@ -37,6 +37,7 @@ struct line_spec {
 };
 void err();
 char convert_esc(char c);
+void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited);
 char get_flags(struct command_spec *command);
 void get_buffer_name(struct command_spec *command);
@@ -90,6 +91,7 @@ void err()
 	printf("?\r\n");
 }
 char convert_esc(char c)
+/* Converts one or more characters for response and printing.  Capitalizes and turns relevant multi-character escape sequences into single command characters */
 {
 	if(c >= 'a' && c <= 'z')
 	{
@@ -175,6 +177,39 @@ int increase_buffer(char **buffer, size_t *size)
 	*buffer = new_buffer;
 	free(old_buffer);
 	return new_buffer != NULL;
+}
+void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num)
+/* Inserts all of the items from src into dest at position pos, replacing num of dest's existing items. All replaced items are freed. Dest keeps the items from src and src itself is freed. dest_length should point to dest's length, and this will be set to the length of the new dest. The new dest is returned. */
+{
+	int i, new_length;
+	new_length = *dest_length - num + src_length;
+	if(num < src_length)
+	{
+		dest = realloc(dest, new_length * sizeof(void**));
+		for(i = *dest_length-1; i >= pos+num; i--)
+		{
+			dest[i+1] = dest[i];
+		}
+	}
+	else if(num > src_length)
+	{
+		for(i = pos+src_length; i < *dest_length - 1; i++)
+		{
+			if(i < pos+num)
+				free(dest[i]);
+			dest[i] = dest[i+1];
+		}
+		dest = realloc(dest, new_length * sizeof(void**));
+	}
+	for(i = 0; i < src_length; i++)
+	{
+		if(i < num)
+			free(dest[i+pos]);
+		dest[i+pos] = src[i];
+	}
+	free(src);
+	*dest_length = new_length;
+	return dest;
 }
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited)
 /* Adds the character c to the buffer pointed to by line whose current number of characters is pointed to by length and whose currently-allocated space is pointed to by buf_size.  If unlimited is true, the buffer will be reallocated if needed to make room for the new character; otherwise characters past the end are silently dropped. */
@@ -347,6 +382,7 @@ struct command_spec* qed_getline()
 	int second_addr = 0;	/* Whether we are currently reading a second address (i.e. it's after the comma) */
 	int cmd_valid = 1;	/* Whether a command would be valid now */
 	int rel_valid = 1;	/* Whether a relative (. or $) would be valid (because one hasn't been used yet) */
+	int rubout_pressed = 0;
 	struct command_spec *command;
 	struct line_spec **line;
 	command = malloc(sizeof(struct command_spec));
@@ -367,6 +403,22 @@ struct command_spec* qed_getline()
 			exit(1);
 		}
 		c = convert_esc(c);
+		if(c == 0x7F)
+		{
+			if(rubout_pressed)
+			{
+				return NULL;
+			}
+			else
+			{
+				printf("%c", 0x07);
+				rubout_pressed = 1;
+			}
+		}
+		else
+		{
+			rubout_pressed = 0;
+		}
 		if(c >= '0' && c <= '9')
 		/* Received a numeric digit */
 		{
@@ -606,9 +658,10 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		printf("\r\n");
 	switch(command->command)
 	{
-		int i, length, done = 0;
+		int i, length, input_length, buffer_length, done;
 		char c;
 		char *buffer;
+		char **input_lines, **one_line;
 	case '=':
 		printf("%i\r\n", line1);
 		break;
@@ -631,7 +684,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	case '\n':
 		for(i=line1; i<=line2; i++)
 		{
-			printf("%i: %s%s", i, state->main_buffer[i], sep);
+			printf("%s%s", state->main_buffer[i], sep);
 		}
 		state->dot = line2;
 		break;
@@ -640,6 +693,8 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		/* Intentional Fallthrough */
 	case 'A':
 		done = 0;
+		if(!command->start)
+			line1 = state->dollar;
 		do {
 			get_string(&buffer, &length, '\0', 1, 1);
 			if(buffer[length-2] == 0x04)
@@ -660,6 +715,36 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 				free(buffer);
 		} while(!done);
 		break;
+	case 'D':
+		length = state->dollar+1;
+		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), NULL, 0, line1, line2-line1+1);
+		state->dollar = length-1;
+		state->dot = line1-1;
+		break;
+	case 'C':
+		input_lines = NULL;
+		input_length = 0;
+		done = 0;
+		do {
+			get_string(&buffer, &buffer_length, '\0', 1, 1);
+			if(buffer[buffer_length-2] == 0x04)
+				done = 1;
+			if(buffer[0] != 0x04)
+			{
+				buffer[buffer_length-2] = '\n';
+				one_line = malloc(sizeof(void*));
+				*one_line = buffer;
+				input_lines = (char**)replace_elements_in_vector((void**)(input_lines), &(input_length), (void**)one_line, 1, input_length, 0);
+			}
+			else
+				free(buffer);
+		} while(!done);
+		length = state->dollar+1;
+		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), (void**)input_lines, input_length, line1, line2-line1+1);
+		state->dollar = length-1;
+		state->dot = line1 + input_length - 1;
+		break;
+	case 'R':
 	case 'F':
 			return 1;
 	default:
