@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <termios.h>
 #include <string.h>
+#include <errno.h>
 
 
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
@@ -17,6 +18,7 @@ struct state_spec {
 	char **main_buffer;
 	int dot;
 	int dollar;
+	FILE *file;
 };
 struct command_spec {
 	struct line_spec *start;
@@ -37,12 +39,14 @@ struct line_spec {
 };
 void err();
 char convert_esc(char c);
+int next_char(char *c, int convert, int echo, struct state_spec *state);
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
-void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited);
+void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo);
 char get_flags(struct command_spec *command);
 void get_buffer_name(struct command_spec *command);
-void get_string(char **str, int *length, char delim, int full, int unlimited);
-struct command_spec* qed_getline();
+void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, struct state_spec *state);
+char **get_lines(int *length, int literal, struct state_spec *state);
+struct command_spec* get_command(struct state_spec *state);
 int resolve_line_spec(struct line_spec *line, struct state_spec *state);
 int execute_command(struct command_spec *command, struct state_spec *state);
 int increase_buffer(char **buffer, size_t *size);
@@ -67,9 +71,10 @@ int main(int argc, char **argv)
 	state->main_buffer = calloc(sizeof(int*), 1);
 	state->dollar = 0;
 	state->dot = 0;
+	state->file = NULL;
 	do
 	{
-		command = qed_getline();
+		command = get_command(state);
 		if(command != NULL)
 		{
 			finished = execute_command(command, state);
@@ -178,6 +183,25 @@ int increase_buffer(char **buffer, size_t *size)
 	free(old_buffer);
 	return new_buffer != NULL;
 }
+int next_char(char *c, int convert, int echo, struct state_spec *state)
+{
+	int status;
+	if(state->file)
+	{
+		status = fscanf(state->file, "%c", c);
+	}
+	else
+	{
+		status = scanf("%c", c);
+	}
+	if(!status || status == EOF)
+		return 0;
+	if(convert)
+		*c = convert_esc(*c);
+	if(echo)
+		printf("%c", *c);
+	return status;
+}
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num)
 /* Inserts all of the items from src into dest at position pos, replacing num of dest's existing items. All replaced items are freed. Dest keeps the items from src and src itself is freed. dest_length should point to dest's length, and this will be set to the length of the new dest. The new dest is returned. */
 {
@@ -188,16 +212,16 @@ void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int
 		dest = realloc(dest, new_length * sizeof(void**));
 		for(i = *dest_length-1; i >= pos+num; i--)
 		{
-			dest[i+1] = dest[i];
+			dest[i+new_length-*dest_length] = dest[i];
 		}
 	}
 	else if(num > src_length)
 	{
-		for(i = pos+src_length; i < *dest_length - 1; i++)
+		for(i = pos+src_length; i < new_length; i++)
 		{
 			if(i < pos+num)
 				free(dest[i]);
-			dest[i] = dest[i+1];
+			dest[i] = dest[i+*dest_length-new_length];
 		}
 		dest = realloc(dest, new_length * sizeof(void**));
 	}
@@ -211,7 +235,7 @@ void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int
 	*dest_length = new_length;
 	return dest;
 }
-void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited)
+void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo)
 /* Adds the character c to the buffer pointed to by line whose current number of characters is pointed to by length and whose currently-allocated space is pointed to by buf_size.  If unlimited is true, the buffer will be reallocated if needed to make room for the new character; otherwise characters past the end are silently dropped. */
 {
 	if(*length == *buf_size)
@@ -222,7 +246,7 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 			*line = realloc(*line, *buf_size);
 			(*line)[*length] = c;
 			*length = *length+1;
-			if(c != 0x04)
+			if(c != 0x04 && echo)
 				printf("%c", c);
 		}
 	}
@@ -230,7 +254,8 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 	{
 		(*line)[*length] = c;
 		*length = *length+1;
-		printf("%c", c);
+		if(echo)
+			printf("%c", c);
 	}
 }
 char get_flags(struct command_spec *command)
@@ -293,87 +318,123 @@ void get_buffer_name(struct command_spec *command)
 		command->arg1[1] = '\0';
 	}
 }
-void get_string(char **str, int *length, char delim, int full, int unlimited)
+void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, struct state_spec *state)
 {
 	char c;
 	int newstr = 1;
 	int stop = 0;
 	int buf_size = BUF_INCREMENT;
 	int my_length;
+	int status;
 	if(!length) {length = &my_length;}
 	*str = malloc(buf_size+1);
 	*length = 0;
 	do
 	{
-		scanf("%c", &c);
-		switch(c)
+		status = next_char(&c, 0, 0, state);
+		if(!status)
 		{
-			case 0x01:	/* Ctrl-A (Delete Character) */
-				if(*length)
-				{
-					*length = *length-1;
-				}
-				printf("%s", up_arrow);
-				if(!(*length))
-				{
-					printf("\r\n");
-				}
-				break;
-			case 0x17:	/* Ctrl-W (Delete Word) */
-				printf("\\");
-				while((*length)&&((*str)[*length-1] == ' '||(*str)[*length-1] == '\t'))
-				{
-					*length = *length-1;
-				}
-				while((*length)&&((*str)[*length-1] != ' '&&(*str)[*length-1] != '\t'))
-				{
-					*length = *length-1;
-				}
-				if(!(*length))
-				{
-					printf("\r\n");
-				}
-				break;
-			case 0x11:	/* Ctrl-Q (Delete Line) */
-				printf("%s\r\n",left_arrow);
-				*length = 0;
-				break;
-			case 0x16:	/* Ctrl-V (Literal Character) */
-				scanf("%c",&c);
-				add_char_to_buffer(str, length, &buf_size, c, unlimited);
-				break;
-			default:
-				if(c == delim)
-				{
-					printf("%c",c);
-					stop = 1;
-				}
-				else if(full)
-				{
-					if(c == 0x04)
+			stop = 1;
+			add_char_to_buffer(str, length, &buf_size, 0x04, unlimited, !literal);
+		}
+		else if(literal)
+		{
+			add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
+			stop = (c == '\n');
+		}
+		else
+		{
+			switch(c)
+			{
+				case 0x01:	/* Ctrl-A (Delete Character) */
+					if(*length)
+					{
+						*length = *length-1;
+					}
+					printf("%s", up_arrow);
+					if(!(*length))
 					{
 						printf("\r\n");
-						stop = 1;
 					}
-					else if(c == '\r')
+					break;
+				case 0x17:	/* Ctrl-W (Delete Word) */
+					printf("\\");
+					while((*length)&&((*str)[*length-1] == ' '||(*str)[*length-1] == '\t'))
 					{
-						printf("\n");
+						*length = *length-1;
+					}
+					while((*length)&&((*str)[*length-1] != ' '&&(*str)[*length-1] != '\t'))
+					{
+						*length = *length-1;
+					}
+					if(!(*length))
+					{
+						printf("\r\n");
+					}
+					break;
+				case 0x11:	/* Ctrl-Q (Delete Line) */
+					printf("%s\r\n",left_arrow);
+					*length = 0;
+					break;
+				case 0x16:	/* Ctrl-V (Literal Character) */
+					status = next_char(&c, 0, 0, state);
+					add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
+					break;
+				default:
+					if(c == delim)
+					{
+						printf("%c",c);
 						stop = 1;
 					}
-					fflush(stdin);
-					add_char_to_buffer(str, length, &buf_size, c, unlimited);
-					fflush(stdin);
-				}
-				else
-				{
-					add_char_to_buffer(str, length, &buf_size, c, unlimited);
-				}
+					else if(full)
+					{
+						if(c == 0x04)
+						{
+							printf("\r\n");
+							stop = 1;
+						}
+						else if(c == '\r')
+						{
+							printf("\n");
+							stop = 1;
+						}
+						add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
+					}
+					else
+					{
+						add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
+					}
+			}
 		}
 	} while(!stop);
 	(*str)[*length] = '\0';
 	*length = *length+1;
 }
-struct command_spec* qed_getline()
+char **get_lines(int *length, int literal, struct state_spec *state)
+{
+	char **input_lines = NULL;
+	char *buffer = NULL;
+	char **one_line = NULL;
+	int buffer_length = 0;
+	int done = 0;
+	*length = 0;
+	do {
+		get_string(&buffer, &buffer_length, '\0', 1, 1, literal, state);
+		if(buffer[buffer_length-2] == 0x04)
+			done = 1;
+		if(buffer[0] != 0x04)
+		{
+			buffer[buffer_length-2] = '\n';
+			one_line = malloc(sizeof(void*));
+			*one_line = buffer;
+			input_lines = (char**)replace_elements_in_vector((void**)(input_lines), length, (void**)one_line, 1, *length, 0);
+		}
+		else
+			free(buffer);
+	} while(!done);
+	return input_lines;
+}
+struct command_spec* get_command(struct state_spec *state)
 {
 	unsigned char c = '\0';
 	int done = 0;
@@ -488,18 +549,18 @@ struct command_spec* qed_getline()
 			if(*line == NULL)
 			{
 				*line = new_line_spec('+',c,0,NULL);
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[');
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, state);
 			}
 			else if((*line)->type == 'c')
 			{
 				(*line)->type = c;
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[');
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, state);
 			}
 			else
 			{
 				line = &((*line)->next);
 				*line = new_line_spec('+',c,0,NULL);
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[');
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, state);
 			}
 			rel_valid = 0;
 			compound_valid = 1;
@@ -559,7 +620,7 @@ struct command_spec* qed_getline()
 						printf("%c",c);
 						if(c == '\n') {printf("\r");}
 					} while(c == ' ' || c == '\t' || c == '\n');
-					get_string(&(command->arg1), NULL, c, 0, 1);
+					get_string(&(command->arg1), NULL, c, 0, 1, 0, state);
 				}
 				else if(c == 'S')
 				{
@@ -569,9 +630,9 @@ struct command_spec* qed_getline()
 						free_command_spec(command);
 						return NULL;
 					}
-					get_string(&(command->arg1), NULL, c, 0, 1);
+					get_string(&(command->arg1), NULL, c, 0, 1, 0, state);
 					printf(" FOR %c", c);
-					get_string(&(command->arg2), NULL, c, 0, 1);
+					get_string(&(command->arg2), NULL, c, 0, 1, 0, state);
 				}
 				scanf("%c",&c);
 				c = convert_esc(c);
@@ -633,7 +694,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			return 0;
 		}
 	}
-	if(line1 == 0 && command->command != 'A' && command->command != '=')
+	if(line1 == 0 && command->command != 'A' && command->command != '=' && command->command != 'R')
 		line1 = 1;
 	line2 = line1;
 	if(command->end)
@@ -645,7 +706,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			return 0;
 		}
 	}
-	if(line2 == 0 && command->command != 'A' && command->command != '=')
+	if(line2 == 0 && command->command != 'A' && command->command != '=' && command->command != 'R')
 		line2 = 1;
  	if(command->command == '\n' && !command->start) 
 		line2 = ++line1;
@@ -696,7 +757,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		if(!command->start)
 			line1 = state->dollar;
 		do {
-			get_string(&buffer, &length, '\0', 1, 1);
+			get_string(&buffer, &length, '\0', 1, 1, 0, state);
 			if(buffer[length-2] == 0x04)
 				done = 1;
 			if(buffer[0] != 0x04)
@@ -722,29 +783,29 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		state->dot = line1-1;
 		break;
 	case 'C':
-		input_lines = NULL;
-		input_length = 0;
-		done = 0;
-		do {
-			get_string(&buffer, &buffer_length, '\0', 1, 1);
-			if(buffer[buffer_length-2] == 0x04)
-				done = 1;
-			if(buffer[0] != 0x04)
-			{
-				buffer[buffer_length-2] = '\n';
-				one_line = malloc(sizeof(void*));
-				*one_line = buffer;
-				input_lines = (char**)replace_elements_in_vector((void**)(input_lines), &(input_length), (void**)one_line, 1, input_length, 0);
-			}
-			else
-				free(buffer);
-		} while(!done);
+		input_lines = get_lines(&input_length, 0, state);
 		length = state->dollar+1;
 		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), (void**)input_lines, input_length, line1, line2-line1+1);
 		state->dollar = length-1;
 		state->dot = line1 + input_length - 1;
 		break;
 	case 'R':
+		if(!(state->file = fopen(command->arg1, "r")))
+		{
+			err();
+			return 0;
+		}
+		if(!command->start)
+			line1 = state->dollar;
+		line1++;
+		input_lines = get_lines(&input_length, 1, state);
+		length = state->dollar+1;
+		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), (void**)input_lines, input_length, line1, 0);
+		state->dollar = length-1;
+		state->dot = line1 + input_length - 1;
+		fclose(state->file);
+		state->file = NULL;
+		break;
 	case 'F':
 			return 1;
 	default:
