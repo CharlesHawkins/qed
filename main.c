@@ -3,6 +3,7 @@
 #include <termios.h>
 #include <string.h>
 #include <errno.h>
+#include <ctype.h>
 
 
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
@@ -38,6 +39,7 @@ struct line_spec {
 	struct line_spec *next;
 };
 void err();
+int find_string(char *search, int start_line, int is_tag, struct state_spec *state);
 char convert_esc(char c);
 int next_char(char *c, int convert, int echo, struct state_spec *state);
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
@@ -94,6 +96,39 @@ int main(int argc, char **argv)
 void err()
 {
 	printf("?\r\n");
+}
+int find_string(char *search, int start_line, int is_tag, struct state_spec *state)
+{
+	int i;
+	char *found;
+	int length = strlen(search);
+	char next;
+	for(i = start_line; i <= state->dollar; i++)
+	{
+		found = strstr(state->main_buffer[i], search);
+		if(is_tag)
+		{
+			next = found?found[length]:'0';
+			if(found == state->main_buffer[i] && next && !isalnum(next))
+				return i;
+//			else printf("(non-tag at %i:%i)", i, found-state->main_buffer[i]);
+		}
+		else if(found)
+			return i;
+	}
+	for(i = 1; i < start_line; i++)
+	{
+		found = strstr(state->main_buffer[i], search);
+		if(is_tag)
+		{
+			next = found?found[length]:'0';
+			if(found == state->main_buffer[i] && next && !isalnum(next))
+				return i;
+		}
+		else if(found)
+			return i;
+	}
+	return 0;
 }
 char convert_esc(char c)
 /* Converts one or more characters for response and printing.  Capitalizes and turns relevant multi-character escape sequences into single command characters */
@@ -650,7 +685,7 @@ struct command_spec* get_command(struct state_spec *state)
 }
 int resolve_line_spec(struct line_spec *line, struct state_spec *state)
 {
-	int line_number = 0;
+	int line_number = 0, first = 1;
 	if(!state || !(state->main_buffer))
 	{
 		return -1;
@@ -669,10 +704,17 @@ int resolve_line_spec(struct line_spec *line, struct state_spec *state)
 			case '$':
 			line_number += state->dollar;
 			break;
+			case ':':
+			if(!(line_number = find_string(line->search, first?state->dot+1:line_number, 1, state))) {return -1;}
+			break;
+			case '[':
+			if(!(line_number = find_string(line->search, first?state->dot+1:line_number, 0, state))) {return -1;}
+			break;
 			default:
 			return -1;
 		}
 		line = line->next;
+		first = 0;
 	}
 	if(line_number < 0)
 		return 1;
