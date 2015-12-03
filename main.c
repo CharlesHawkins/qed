@@ -806,6 +806,24 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		fclose(state->file);
 		state->file = NULL;
 		break;
+	case 'W':
+		if(!(state->file = fopen(command->arg1, "w")))
+		{
+			err();
+			return 0;
+		}
+		if(!(command->start || command->end))
+		{
+			line1 = 1;
+			line2 = state->dollar;
+		}
+		for(i = line1; i <= line2; i++)
+		{
+			fprintf(state->file, "%s", state->main_buffer[i]);
+		}
+		fclose(state->file);
+		state->file = NULL;
+		break;
 	case 'F':
 			return 1;
 	default:
