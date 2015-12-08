@@ -40,6 +40,7 @@ struct line_spec {
 };
 void err();
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state);
+int substitute(char *replace, char *find, int start, int end, char mode, int num, struct state_spec *state);
 char convert_esc(char c);
 int next_char(char *c, int convert, int echo, struct state_spec *state);
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
@@ -129,6 +130,89 @@ int find_string(char *search, int start_line, int is_tag, struct state_spec *sta
 			return i;
 	}
 	return 0;
+}
+int substitute(char *replace, char *find, int start, int end, char mode, int num, struct state_spec *state)
+{
+	int old_str_length, replace_length, find_length, new_str_length = 0, done = 0, line, num_subs = 0;
+	replace_length = strlen(replace);
+	find_length = strlen(find);
+	for(line = start; line <= end; line++)
+	{
+		char *found;
+		char *old_str = state->main_buffer[line];
+		old_str_length = strlen(old_str);
+		int made_sub = 0, start_from = 0;
+		while((found = strstr(old_str+start_from, find)))
+		{
+			char *new_str;
+			int pos = found-old_str;
+			start_from = pos + replace_length;
+			if(num >= 0 &&num_subs >= num)
+				return num_subs;
+			new_str = malloc(old_str_length - find_length + replace_length);
+			new_str[0] = '\0';
+			strncat(new_str, old_str, pos);
+			if(mode == 'W' || mode == 'V')
+			{
+				char c, lastchar = '0';
+				int skip = 0;
+				printf("%s\"%s\"%s\r", new_str, find, found+find_length);
+				do
+				{
+					next_char(&c, 1, 1, state);
+					if(isdigit(c))
+					{
+						if(isdigit(lastchar))
+						{
+							num = num * 10 + c - '0';
+						}
+						else if(lastchar == ':')
+							num = c - '0';
+						else
+						{
+							skip = 1;
+							break;
+						}
+					}
+					else if(c == 'G' || c == 'W' || c == 'L' || c == 'V')
+					{
+						if(lastchar == ':')
+							mode = c;
+						else
+						{
+							skip = 1;
+							break;
+						}
+					}
+					else if(c == 'S')
+						break;
+					else if(!isblank(c) && c != ':')
+					{
+						skip = 1;
+						break;
+					}
+					lastchar = c;
+				} while(1);
+				printf("\r\n");
+				if(skip)
+				{
+					free(new_str);
+					continue;
+				}
+			}
+			strcat(new_str, replace);
+			strcat(new_str, found+find_length);
+			free(old_str);
+			state->main_buffer[line] = old_str = new_str;
+			num_subs++;
+			made_sub = 1;
+		}
+		if(made_sub && (mode == 'L' || mode == 'V'))
+		{
+			printf("%s\r", state->main_buffer[line]);
+		}
+	}
+	return num_subs;
 }
 char convert_esc(char c)
 /* Converts one or more characters for response and printing.  Capitalizes and turns relevant multi-character escape sequences into single command characters */
@@ -668,6 +752,11 @@ struct command_spec* get_command(struct state_spec *state)
 					get_string(&(command->arg1), NULL, c, 0, 1, 0, state);
 					printf(" FOR %c", c);
 					get_string(&(command->arg2), NULL, c, 0, 1, 0, state);
+					if(strlen(command->arg2) == 0)
+					{
+						free_command_spec(command);
+						return NULL;
+					}
 				}
 				scanf("%c",&c);
 				c = convert_esc(c);
@@ -761,7 +850,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		printf("\r\n");
 	switch(command->command)
 	{
-		int i, length, input_length, buffer_length, done;
+		int i, n, length, input_length, buffer_length, done;
 		char c;
 		char *buffer;
 		char **input_lines, **one_line;
@@ -865,6 +954,13 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		}
 		fclose(state->file);
 		state->file = NULL;
+		break;
+	case 'S':
+		n = substitute(command->arg1, command->arg2, line1, line2, command->flag, command->num, state);
+		if(n == 0)
+			err();
+		else
+			printf("%i\r\n", n);
 		break;
 	case 'F':
 			return 1;
