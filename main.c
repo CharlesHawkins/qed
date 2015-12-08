@@ -881,11 +881,13 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		state->dot = line2;
 		break;
 	case 'I':
+		if(command->start == NULL)
+			line1 = state->dot;
 		line1--;
 		/* Intentional Fallthrough */
 	case 'A':
 		done = 0;
-		if(!command->start)
+		if(!command->start && command->command != 'I')
 			line1 = state->dollar;
 		do {
 			get_string(&buffer, &length, '\0', 1, 1, 0, state);
