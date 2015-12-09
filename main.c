@@ -112,7 +112,6 @@ int find_string(char *search, int start_line, int is_tag, struct state_spec *sta
 			next = found?found[length]:'0';
 			if(found == state->main_buffer[i] && next && !isalnum(next))
 				return i;
-//			else printf("(non-tag at %i:%i)", i, found-state->main_buffer[i]);
 		}
 		else if(found)
 			return i;
@@ -227,7 +226,6 @@ char convert_esc(char c)
 	}
 	else if(c == 0x1B)
 	{
-		char c;
 		scanf("%c", &c);
 		if(c == 0x5B)
 		{
@@ -854,6 +852,15 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		char c;
 		char *buffer;
 		char **input_lines, **one_line;
+	case '^':
+		if(state->dot <= 1)
+		{
+			err();
+			return 0;
+		}
+		state->dot = state->dot - 1;
+		printf("%s\r", state->main_buffer[state->dot]);
+		break;
 	case '=':
 		printf("%i\r\n", line1);
 		break;
