@@ -1,3 +1,7 @@
+/* QED Text Editor
+ * Based on the editor of the same name by L. Peter Deutsch and Butler W. Lampson.
+ * This version written by Charles Hawkins
+ */
 #include <stdlib.h>
 #include <stdio.h>
 #include <termios.h>
@@ -17,6 +21,7 @@ const int BUF_INCREMENT = 30;
 
 struct state_spec {
 	char **main_buffer;
+	char **aux_buffers;
 	int dot;
 	int dollar;
 	FILE *file;
@@ -39,6 +44,9 @@ struct line_spec {
 	struct line_spec *next;
 };
 void err();
+int buffer_for_char(char c);
+void kill_buffer(int buffer_num, struct state_spec *state);
+void set_buffer(int buffer_num, char *text, struct state_spec *state);
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state);
 int substitute(char *replace, char *find, int start, int end, char mode, int num, struct state_spec *state);
 char convert_esc(char c);
@@ -72,6 +80,8 @@ int main(int argc, char **argv)
 
 	state = malloc(sizeof(struct state_spec));
 	state->main_buffer = calloc(sizeof(int*), 1);
+	state->aux_buffers = calloc(sizeof(char*), 36);
+	memset(state->aux_buffers, 0, sizeof(char*) * 36);
 	state->dollar = 0;
 	state->dot = 0;
 	state->file = NULL;
@@ -97,6 +107,26 @@ int main(int argc, char **argv)
 void err()
 {
 	printf("?\r\n");
+}
+int buffer_for_char(char c)
+{
+	if(isdigit(c))
+		return (int)c;
+	else if(isalpha(c))
+		return c-'A'+10;
+	else
+		return -1;
+}
+void kill_buffer(int buffer_num, struct state_spec *state)
+{
+	if(state->aux_buffers[buffer_num])
+		free(state->aux_buffers[buffer_num]);
+	state->aux_buffers[buffer_num] = NULL;
+}
+void set_buffer(int buffer_num, char *text, struct state_spec *state)
+{
+	kill_buffer(buffer_num, state);
+	state->aux_buffers[buffer_num] = text;
 }
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state)
 {
@@ -305,18 +335,19 @@ int next_char(char *c, int convert, int echo, struct state_spec *state)
 	int status;
 	if(state->file)
 	{
-		status = fscanf(state->file, "%c", c);
+		status = (char)getc_unlocked(state->file);
 	}
 	else
 	{
-		status = scanf("%c", c);
+		status = (char)getchar_unlocked();
 	}
 	if(!status || status == EOF)
 		return 0;
+	*c = (char)status;
 	if(convert)
 		*c = convert_esc(*c);
 	if(echo)
-		printf("%c", *c);
+		putchar_unlocked((int)*c);
 	return status;
 }
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num)
@@ -781,6 +812,7 @@ int resolve_line_spec(struct line_spec *line, struct state_spec *state)
 	{
 		switch(line->type)
 		{
+			char *buf;
 			case 'n':
 			line_number = line->sign == '-'?line_number-line->line:line_number+line->line;
 			break;
@@ -792,9 +824,15 @@ int resolve_line_spec(struct line_spec *line, struct state_spec *state)
 			line_number += state->dollar;
 			break;
 			case ':':
+			buf = malloc(strlen(line->search));
+			strcpy(buf, line->search);
+			set_buffer(0, buf, state);
 			if(!(line_number = find_string(line->search, first?state->dot+1:line_number, 1, state))) {return -1;}
 			break;
 			case '[':
+			buf = malloc(strlen(line->search));
+			strcpy(buf, line->search);
+			set_buffer(0, buf, state);
 			if(!(line_number = find_string(line->search, first?state->dot+1:line_number, 0, state))) {return -1;}
 			break;
 			default:
@@ -970,6 +1008,17 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			err();
 		else
 			printf("%i\r\n", n);
+		break;
+	case 'J':
+		get_string(&buffer, &buffer_length, '\0', 1, 1, 0, state);
+		set_buffer(buffer_for_char(command->arg1[0]), buffer, state);
+		break;
+	case 'K':
+		kill_buffer(buffer_for_char(command->arg1[0]), state);
+		break;
+	case 'B':
+		if(state->aux_buffers[buffer_for_char(command->arg1[0])])
+			printf("%s\r", state->aux_buffers[buffer_for_char(command->arg1[0])]);
 		break;
 	case 'F':
 			return 1;
