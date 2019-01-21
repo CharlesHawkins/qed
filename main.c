@@ -14,18 +14,23 @@ const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW";
 char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "};
+char *cmd_strings_quick[26] = {"\"", "/", "=", "", "", "\r\n", "\r\n", "A", "B", "C", "D", "E", "F", "G", "I", "J", "K", "L", "M", "P", "Q", "R", "S", "T", "V", "W"};
 const int cmd_addrs[26] = {0, 2, 1, 0, 1, 2, 2, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2};
 const char *cmd_noconf = "\"/=^<\n\r";
 const char *cmd_noaddr = "\"BFJKQTV";
 const int BUF_INCREMENT = 30;
 
+/* Structure specifying the current state of the program, including the contents of the main and numbered buffers,
+the current and last lines (do and dollar), the file read from, and whether we're in quick mode. */
 struct state_spec {
 	char **main_buffer;
 	char **aux_buffers;
 	int dot;
 	int dollar;
 	FILE *file;
+	int quick;
 };
+/* Complete command specifier, including starting and ending lines, the command, 0-2 arguments, flags */
 struct command_spec {
 	struct line_spec *start;
 	struct line_spec *end;
@@ -36,6 +41,8 @@ struct command_spec {
 	int num;
 };
 
+/* Structure containing a line specifier as entered on the command line. Can be absolute or relative, numerical or search-based. 
+   Adding or subtracting addresses uses multiple line spec structs, chained into a linked list via the next pointer. */
 struct line_spec {
 	char sign;
 	char type;
@@ -55,7 +62,7 @@ void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo);
 char get_flags(struct command_spec *command);
 void get_buffer_name(struct command_spec *command);
-void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, struct state_spec *state);
+void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, struct state_spec *state);
 char **get_lines(int *length, int literal, struct state_spec *state);
 struct command_spec* get_command(struct state_spec *state);
 int resolve_line_spec(struct line_spec *line, struct state_spec *state);
@@ -238,7 +245,7 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 		}
 		if(made_sub && (mode == 'L' || mode == 'V'))
 		{
-			printf("%s\r", state->main_buffer[line]);
+			printf("%s\r\n", state->main_buffer[line]);
 		}
 	}
 	return num_subs;
@@ -246,7 +253,7 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 char convert_esc(char c)
 /* Converts one or more characters for response and printing.  Capitalizes and turns relevant multi-character escape sequences into single command characters */
 {
-	if(c >= 'a' && c <= 'z')
+	if(c >= 'a' && c <= 'z') /* Make upper case if it's not already */
 	{
 		c += 'A'-'a';
 	}
@@ -254,7 +261,7 @@ char convert_esc(char c)
 	{
 		c = '\n';
 	}
-	else if(c == 0x1B)
+	else if(c == 0x1B) /* We have an escape sequence */
 	{
 		scanf("%c", &c);
 		if(c == 0x5B)
@@ -319,6 +326,7 @@ void free_command_spec(struct command_spec *cmd)
 	free(cmd);
 }
 int increase_buffer(char **buffer, size_t *size)
+/* Allocates more space for the buffer. Why I didn't just use realloc() I'm not sure... */
 {
 	int old_size = *size;
 	int new_size = old_size + BUF_INCREMENT;
@@ -466,7 +474,7 @@ void get_buffer_name(struct command_spec *command)
 		command->arg1[1] = '\0';
 	}
 }
-void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, struct state_spec *state)
+void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, struct state_spec *state)
 {
 	char c;
 	int newstr = 1;
@@ -544,7 +552,10 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 						else if(c == '\r')
 						{
 							printf("\n");
-							stop = 1;
+							if(oneline)
+							{
+								stop = 1;
+							}
 						}
 						add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
 					}
@@ -567,7 +578,7 @@ char **get_lines(int *length, int literal, struct state_spec *state)
 	int done = 0;
 	*length = 0;
 	do {
-		get_string(&buffer, &buffer_length, '\0', 1, 1, literal, state);
+		get_string(&buffer, &buffer_length, '\0', 1, 1, literal, 1, state);
 		if(buffer[buffer_length-2] == 0x04)
 			done = 1;
 		if(buffer[0] != 0x04)
@@ -697,18 +708,18 @@ struct command_spec* get_command(struct state_spec *state)
 			if(*line == NULL)
 			{
 				*line = new_line_spec('+',c,0,NULL);
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, state);
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, state);
 			}
 			else if((*line)->type == 'c')
 			{
 				(*line)->type = c;
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, state);
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, state);
 			}
 			else
 			{
 				line = &((*line)->next);
 				*line = new_line_spec('+',c,0,NULL);
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, state);
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, state);
 			}
 			rel_valid = 0;
 			compound_valid = 1;
@@ -768,7 +779,7 @@ struct command_spec* get_command(struct state_spec *state)
 						printf("%c",c);
 						if(c == '\n') {printf("\r");}
 					} while(c == ' ' || c == '\t' || c == '\n');
-					get_string(&(command->arg1), NULL, c, 0, 1, 0, state);
+					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
 				}
 				else if(c == 'S')
 				{
@@ -778,9 +789,9 @@ struct command_spec* get_command(struct state_spec *state)
 						free_command_spec(command);
 						return NULL;
 					}
-					get_string(&(command->arg1), NULL, c, 0, 1, 0, state);
+					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
 					printf(" FOR %c", c);
-					get_string(&(command->arg2), NULL, c, 0, 1, 0, state);
+					get_string(&(command->arg2), NULL, c, 0, 1, 0, 1, state);
 					if(strlen(command->arg2) == 0)
 					{
 						free_command_spec(command);
@@ -935,7 +946,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		if(!command->start && command->command != 'I')
 			line1 = state->dollar;
 		do {
-			get_string(&buffer, &length, '\0', 1, 1, 0, state);
+			get_string(&buffer, &length, '\0', 1, 1, 0, 1, state);
 			if(buffer[length-2] == 0x04)
 				done = 1;
 			if(buffer[0] != 0x04)
@@ -1010,7 +1021,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			printf("%i\r\n", n);
 		break;
 	case 'J':
-		get_string(&buffer, &buffer_length, '\0', 1, 1, 0, state);
+		get_string(&buffer, &buffer_length, (char)4, 1, 1, 0, 0, state);
 		set_buffer(buffer_for_char(command->arg1[0]), buffer, state);
 		break;
 	case 'K':
@@ -1018,7 +1029,21 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		break;
 	case 'B':
 		if(state->aux_buffers[buffer_for_char(command->arg1[0])])
-			printf("%s\r", state->aux_buffers[buffer_for_char(command->arg1[0])]);
+			//printf("\"%s\"\r\n", state->aux_buffers[buffer_for_char(command->arg1[0])]);
+			{
+				char *buf = state->aux_buffers[buffer_for_char(command->arg1[0])];
+				char *c = buf;
+				printf("\"");
+				while(*c)
+				{
+					if(*c == '\r')
+						printf("\r\n");
+					else
+						printf("%c", *c);
+					c++;
+				}
+				printf("\"\r\n");
+			}
 		break;
 	case 'F':
 			return 1;
