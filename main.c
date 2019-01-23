@@ -59,14 +59,14 @@ struct buffer_pos {
 	int buf_num;
 	struct buffer_pos *prev;
 };
-void err();
+void err(struct state_spec *state);
 int buffer_for_char(char c);
 void kill_buffer(int buffer_num, struct state_spec *state);
 void set_buffer(int buffer_num, char *text, struct state_spec *state);
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state);
 int substitute(char *replace, char *find, int start, int end, char mode, int num, struct state_spec *state);
 char convert_esc(char c, struct state_spec *state);
-int next_char(char *c, int convert, int echo, struct state_spec *state);
+int next_char(char *c, int convert, int echo, int ctl_v, struct state_spec *state);
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo);
 char get_flags(struct command_spec *command, struct state_spec *state);
@@ -80,6 +80,7 @@ int increase_buffer(char **buffer, size_t *size);
 struct line_spec *new_line_spec(char sign, char type, int line, char *search);
 void free_line_spec(struct line_spec *ls);
 void free_command_spec(struct command_spec *cmd);
+void free_buffer_stack(struct buffer_pos *stack);
 char print_char(char c);
 int print_buffer(char *buf);
 int main(int argc, char **argv)
@@ -117,7 +118,7 @@ int main(int argc, char **argv)
 		}
 		else
 		{
-			err();
+			err(state);
 			printf("\r\n");
 		}
 	} while(!finished);
@@ -126,9 +127,11 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-void err()
+void err(struct state_spec *state)
 {
 	printf("?\r\n");
+	free_buffer_stack(state->buffer_stack);
+	state->buffer_stack = NULL;
 }
 int buffer_for_char(char c)
 {
@@ -211,7 +214,7 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 				printf("%s\"%s\"%s\r", new_str, find, found+find_length);
 				do
 				{
-					next_char(&c, 1, 1, state);
+					next_char(&c, 1, 1, 0, state);
 					if(isdigit(c))
 					{
 						if(isdigit(lastchar))
@@ -279,10 +282,10 @@ char convert_esc(char c, struct state_spec *state)
 	}
 	else if(c == 0x1B) /* We have an escape sequence */
 	{
-		next_char(&c, 0, 0, state);
+		next_char(&c, 0, 0, 0, state);
 		if(c == 0x5B)
 		{
-			next_char(&c, 0, 0, state);
+			next_char(&c, 0, 0, 0, state);
 			switch(c)
 			{
 				case 'A': c = '^'; break;
@@ -341,6 +344,14 @@ void free_command_spec(struct command_spec *cmd)
 	}
 	free(cmd);
 }
+void free_buffer_stack(struct buffer_pos *stack)
+{
+	if(stack)
+	{
+		free_buffer_stack(stack->prev);
+		free(stack);
+	}
+}
 int increase_buffer(char **buffer, size_t *size)
 /* Allocates more space for the buffer. Why I didn't just use realloc() I'm not sure... */
 {
@@ -379,7 +390,7 @@ int print_buffer(char *buf)
 	}
 	return 1;
 }
-int next_char(char *c, int convert, int echo, struct state_spec *state)
+int next_char(char *c, int convert, int echo, int ctl_v, struct state_spec *state)
 {
 	int status;
 	if(state->file)
@@ -414,6 +425,30 @@ int next_char(char *c, int convert, int echo, struct state_spec *state)
 	}
 	if(!status || status == EOF)
 		return 0;
+	if(status == 0x02 && !ctl_v)	/* CTL-B; execute buffer */
+	{
+		char b;
+		printf("#");
+		next_char(&b, 0, 1, 1, state);
+		int buf_num = buffer_for_char(toupper(b));
+		if(buf_num == -1)
+		{
+			err(state);
+			*c = '\0';
+			return 0;
+		}
+		if(state->buf_sizes[buf_num])
+		{
+			struct buffer_pos *new_pos = malloc(sizeof(struct buffer_pos));
+			new_pos->current_char = -1;
+			new_pos->buf_num = buf_num;
+			new_pos->prev = state->buffer_stack;
+			state->buffer_stack = new_pos;
+			return next_char(c, convert, echo, 0, state);
+		}
+		else
+			return next_char(c, convert, echo, 0, state);
+	}
 	*c = (char)status;
 	if(convert)
 		*c = convert_esc(*c, state);
@@ -481,20 +516,20 @@ char get_flags(struct command_spec *command, struct state_spec *state)
 {
 	char c;
 	do{
-		next_char(&c, 1, 1, state);
+		next_char(&c, 1, 1, 0, state);
 	} while(c == ' ' || c == '\t');
 	while(c == ':')
 	{
 		int n = 0;
 		int digit = 0;
-		next_char(&c, 1, 0, state);
+		next_char(&c, 1, 0, 0, state);
 		while(c >= '0' && c <= '9')
 		{
 			digit = 1;
 			print_char(c);
 			n = n * 10 + c - '0';
 			command->num = n;
-			next_char(&c, 1, 0, state);
+			next_char(&c, 1, 0, 0, state);
 		}
 		if(!digit)
 		{
@@ -503,7 +538,7 @@ char get_flags(struct command_spec *command, struct state_spec *state)
 				printf("%c",c);
 				command->flag = c;
 				do{
-					next_char(&c, 1, 1, state);
+					next_char(&c, 1, 1, 0, state);
 				} while(c == ' ' || c == '\t');
 			}
 			else
@@ -521,7 +556,7 @@ char get_flags(struct command_spec *command, struct state_spec *state)
 void get_buffer_name(struct command_spec *command, struct state_spec *state)
 {
 	char c;
-	next_char(&c, 1, 0, state);
+	next_char(&c, 1, 0, 0, state);
 	if((c>= '0' && c <= '9') || (c >= 'A' && c <= 'Z'))
 	{
 		printf("%c",c);
@@ -543,7 +578,7 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 	*length = 0;
 	do
 	{
-		status = next_char(&c, 0, 0, state);
+		status = next_char(&c, 0, 0, 0, state);
 		if(!status)
 		{
 			stop = 1;
@@ -589,7 +624,7 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 					*length = 0;
 					break;
 				case 0x16:	/* Ctrl-V (Literal Character) */
-					status = next_char(&c, 0, 0, state);
+					status = next_char(&c, 0, 0, 1, state);
 					add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
 					break;
 				default:
@@ -677,10 +712,10 @@ struct command_spec* get_command(struct state_spec *state)
 	printf("*");
 	do
 	{
-		if(!next_char(&c, 0, 0, state))
+		if(!next_char(&c, 0, 0, 0, state))
 		/* Input stream has closed! Complain and exit. */
 		{
-			err();
+			err(state);
 			exit(1);
 		}
 		c = convert_esc(c, state);
@@ -836,7 +871,7 @@ struct command_spec* get_command(struct state_spec *state)
 				{
 					do
 					{
-						next_char(&c, 0, 1, state);
+						next_char(&c, 0, 1, 0, state);
 					} while(c == ' ' || c == '\t' || c == '\n');
 					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
 				}
@@ -858,7 +893,7 @@ struct command_spec* get_command(struct state_spec *state)
 						return NULL;
 					}
 				}
-				next_char(&c, 1, 0, state);
+				next_char(&c, 1, 0, 0, state);
 				if(c != '.')
 				{
 					free_command_spec(command);
@@ -927,7 +962,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		line1 = resolve_line_spec(command->start, state);
 		if(line1 == -1)
 		{
-			err();
+			err(state);
 			return 0;
 		}
 	}
@@ -939,7 +974,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		line2 = resolve_line_spec(command->end, state);
 		if(line2 == -1)
 		{
-			err();
+			err(state);
 			return 0;
 		}
 	}
@@ -949,7 +984,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		line2 = ++line1;
 	if(!strchr(cmd_noaddr, command->command) && (line2 < line1 || line2 > state->dollar))
 	{
-		err();
+		err(state);
 		return 0;
 	}
 	if(command->command != '=' && command->command != '<' && command->command != '\n')
@@ -963,7 +998,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	case '^':
 		if(state->dot <= 1)
 		{
-			err();
+			err(state);
 			return 0;
 		}
 		state->dot = state->dot - 1;
@@ -974,7 +1009,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		break;
 	case 'P':
 		printf("\r\nDOUBLE? ");
-		next_char(&c, 1, 1, state);
+		next_char(&c, 1, 1, 0, state);
 		printf("\r\n");
 		if(c == 'Y')
 			sep = "\r\n";
@@ -982,7 +1017,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			sep = "";
 		else
 		{
-			err();
+			err(state);
 			return 0;
 		}
 	/* Intentional fallthrough */
@@ -1051,6 +1086,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			buffer[strlen(buffer)-1] = '\r';
 		}
 		set_buffer(buffer_for_char(command->arg1[0]), buffer, state);
+		state->buf_sizes[buffer_for_char(command->arg1[0])] = strlen(buffer);
 		if (command->command == 'L')
 			break;
 	case 'D':
@@ -1062,7 +1098,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	case 'R':
 		if(!(state->file = fopen(command->arg1, "r")))
 		{
-			err();
+			err(state);
 			return 0;
 		}
 		if(!command->start)
@@ -1079,7 +1115,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	case 'W':
 		if(!(state->file = fopen(command->arg1, "w")))
 		{
-			err();
+			err(state);
 			return 0;
 		}
 		if(!(command->start || command->end))
@@ -1097,7 +1133,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	case 'S':
 		n = substitute(command->arg1, command->arg2, line1, line2, command->flag, command->num, state);
 		if(n == 0)
-			err();
+			err(state);
 		else
 			printf("%i\r\n", n);
 		break;
@@ -1107,7 +1143,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		if(buffer_length > 2 && buffer[buffer_length-3] != '\r')
 			printf("\r\n");
 		set_buffer(buffer_for_char(command->arg1[0]), buffer, state);
-		state->buf_sizes[buffer_for_char(command->arg1[0])] = buffer_length-1;
+		state->buf_sizes[buffer_for_char(command->arg1[0])] = strlen(buffer);
 		break;
 	case 'K':
 		kill_buffer(buffer_for_char(command->arg1[0]), state);
