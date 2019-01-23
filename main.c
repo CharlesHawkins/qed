@@ -56,12 +56,12 @@ void kill_buffer(int buffer_num, struct state_spec *state);
 void set_buffer(int buffer_num, char *text, struct state_spec *state);
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state);
 int substitute(char *replace, char *find, int start, int end, char mode, int num, struct state_spec *state);
-char convert_esc(char c);
+char convert_esc(char c, struct state_spec *state);
 int next_char(char *c, int convert, int echo, struct state_spec *state);
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo);
-char get_flags(struct command_spec *command);
-void get_buffer_name(struct command_spec *command);
+char get_flags(struct command_spec *command, struct state_spec *state);
+void get_buffer_name(struct command_spec *command, struct state_spec *state);
 void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, struct state_spec *state);
 char **get_lines(int *length, int literal, struct state_spec *state);
 struct command_spec* get_command(struct state_spec *state);
@@ -250,7 +250,7 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 	}
 	return num_subs;
 }
-char convert_esc(char c)
+char convert_esc(char c, struct state_spec *state)
 /* Converts one or more characters for response and printing.  Capitalizes and turns relevant multi-character escape sequences into single command characters */
 {
 	if(c >= 'a' && c <= 'z') /* Make upper case if it's not already */
@@ -263,10 +263,10 @@ char convert_esc(char c)
 	}
 	else if(c == 0x1B) /* We have an escape sequence */
 	{
-		scanf("%c", &c);
+		next_char(&c, 0, 0, state);
 		if(c == 0x5B)
 		{
-			scanf("%c", &c);
+			next_char(&c, 0, 0, state);
 			switch(c)
 			{
 				case 'A': c = '^'; break;
@@ -353,7 +353,7 @@ int next_char(char *c, int convert, int echo, struct state_spec *state)
 		return 0;
 	*c = (char)status;
 	if(convert)
-		*c = convert_esc(*c);
+		*c = convert_esc(*c, state);
 	if(echo)
 		putchar_unlocked((int)*c);
 	return status;
@@ -414,28 +414,24 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 			printf("%c", c);
 	}
 }
-char get_flags(struct command_spec *command)
+char get_flags(struct command_spec *command, struct state_spec *state)
 {
 	char c;
 	do{
-		scanf("%c",&c);
-		c = convert_esc(c);
-		printf("%c",c);
+		next_char(&c, 1, 1, state);
 	} while(c == ' ' || c == '\t');
 	while(c == ':')
 	{
 		int n = 0;
 		int digit = 0;
-		scanf("%c",&c);
-		c = convert_esc(c);
+		next_char(&c, 1, 0, state);
 		while(c >= '0' && c <= '9')
 		{
 			digit = 1;
 			printf("%c",c);
 			n = n * 10 + c - '0';
 			command->num = n;
-			scanf("%c",&c);
-			c = convert_esc(c);
+			next_char(&c, 1, 0, state);
 		}
 		if(!digit)
 		{
@@ -444,9 +440,7 @@ char get_flags(struct command_spec *command)
 				printf("%c",c);
 				command->flag = c;
 				do{
-					scanf("%c",&c);
-					c = convert_esc(c);
-					printf("%c",c);
+					next_char(&c, 1, 1, state);
 				} while(c == ' ' || c == '\t');
 			}
 			else
@@ -461,11 +455,10 @@ char get_flags(struct command_spec *command)
 	}
 	return c;
 }
-void get_buffer_name(struct command_spec *command)
+void get_buffer_name(struct command_spec *command, struct state_spec *state)
 {
 	char c;
-	scanf("%c",&c);
-	c = convert_esc(c);
+	next_char(&c, 1, 0, state);
 	if((c>= '0' && c <= '9') || (c >= 'A' && c <= 'Z'))
 	{
 		printf("%c",c);
@@ -595,7 +588,7 @@ char **get_lines(int *length, int literal, struct state_spec *state)
 }
 struct command_spec* get_command(struct state_spec *state)
 {
-	unsigned char c = '\0';
+	char c = '\0';
 	int done = 0;
 	char *cmd_char_ptr = NULL;
 	int compound_valid = 0;	/* Whether a comma, plus, minus, or space would be valid now */
@@ -616,13 +609,13 @@ struct command_spec* get_command(struct state_spec *state)
 	printf("*");
 	do
 	{
-		if(!scanf("%c", &c))
+		if(!next_char(&c, 0, 0, state))
 		/* Input stream has closed! Complain and exit. */
 		{
 			err();
 			exit(1);
 		}
-		c = convert_esc(c);
+		c = convert_esc(c, state);
 		if(c == 0x7F)
 		{
 			if(rubout_pressed)
@@ -764,7 +757,7 @@ struct command_spec* get_command(struct state_spec *state)
 			{
 				if(c == 'B' || c == 'G' || c == 'J' || c == 'K' || c == 'L')
 				{
-					get_buffer_name(command);
+					get_buffer_name(command, state);
 					if(!command->arg1)
 					{
 						free_command_spec(command);
@@ -775,15 +768,14 @@ struct command_spec* get_command(struct state_spec *state)
 				{
 					do
 					{
-						scanf("%c",&c);
-						printf("%c",c);
+						next_char(&c, 0, 1, state);
 						if(c == '\n') {printf("\r");}
 					} while(c == ' ' || c == '\t' || c == '\n');
 					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
 				}
 				else if(c == 'S')
 				{
-					c = get_flags(command);
+					c = get_flags(command, state);
 					if(!c)
 					{
 						free_command_spec(command);
@@ -798,8 +790,7 @@ struct command_spec* get_command(struct state_spec *state)
 						return NULL;
 					}
 				}
-				scanf("%c",&c);
-				c = convert_esc(c);
+				next_char(&c, 1, 0, state);
 				if(c != '.')
 				{
 					free_command_spec(command);
@@ -915,9 +906,8 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		break;
 	case 'P':
 		printf("\r\nDOUBLE? ");
-		scanf("%c", &c);
-		c = convert_esc(c);
-		printf("%c\r\n",c);
+		next_char(&c, 1, 1, state);
+		printf("\r\n");
 		if(c == 'Y')
 			sep = "\r\n\r";
 		else if(c == 'N')
