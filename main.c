@@ -21,14 +21,16 @@ const char *cmd_noaddr = "\"BFJKQTV";
 const int BUF_INCREMENT = 30;
 
 /* Structure specifying the current state of the program, including the contents of the main and numbered buffers,
-the current and last lines (do and dollar), the file read from, and whether we're in quick mode. */
+the current and last lines (dot and dollar), the file read from, and whether we're in quick mode. */
 struct state_spec {
 	char **main_buffer;
 	char **aux_buffers;
+	int *buf_sizes;
 	int dot;
 	int dollar;
 	FILE *file;
 	int quick;
+	struct buffer_pos *buffer_stack;
 };
 /* Complete command specifier, including starting and ending lines, the command, 0-2 arguments, flags */
 struct command_spec {
@@ -49,6 +51,13 @@ struct line_spec {
 	int line;
 	char *search;
 	struct line_spec *next;
+};
+
+/* Structure containing the stack of buffers currently being read from. Base pointer is to the current / innermost buffer, *prev points to the one outside of that (i.e. to be returned to when this one is done), and so on. */
+struct buffer_pos {
+	int current_char;
+	int buf_num;
+	struct buffer_pos *prev;
 };
 void err();
 int buffer_for_char(char c);
@@ -71,6 +80,8 @@ int increase_buffer(char **buffer, size_t *size);
 struct line_spec *new_line_spec(char sign, char type, int line, char *search);
 void free_line_spec(struct line_spec *ls);
 void free_command_spec(struct command_spec *cmd);
+char print_char(char c);
+int print_buffer(char *buf);
 int main(int argc, char **argv)
 {
 	struct command_spec *command;
@@ -88,10 +99,14 @@ int main(int argc, char **argv)
 	state = malloc(sizeof(struct state_spec));
 	state->main_buffer = calloc(sizeof(int*), 1);
 	state->aux_buffers = calloc(sizeof(char*), 36);
+	state->buf_sizes = calloc(sizeof(int*), 36);
 	memset(state->aux_buffers, 0, sizeof(char*) * 36);
+	memset(state->buf_sizes, 0, sizeof(int*) * 36);
 	state->dollar = 0;
 	state->dot = 0;
 	state->file = NULL;
+	state->quick = 0;
+	state->buffer_stack = NULL;
 	do
 	{
 		command = get_command(state);
@@ -129,6 +144,7 @@ void kill_buffer(int buffer_num, struct state_spec *state)
 	if(state->aux_buffers[buffer_num])
 		free(state->aux_buffers[buffer_num]);
 	state->aux_buffers[buffer_num] = NULL;
+	state->buf_sizes[buffer_num] = 0;
 }
 void set_buffer(int buffer_num, char *text, struct state_spec *state)
 {
@@ -245,7 +261,7 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 		}
 		if(made_sub && (mode == 'L' || mode == 'V'))
 		{
-			printf("%s\r\n", state->main_buffer[line]);
+			print_buffer(state->main_buffer[line]);
 		}
 	}
 	return num_subs;
@@ -338,12 +354,59 @@ int increase_buffer(char **buffer, size_t *size)
 	free(old_buffer);
 	return new_buffer != NULL;
 }
+char print_char(char c)
+/* Prints the character c, converting it for printability as necessary (e.g. CR becomes CRLF, ^A becomes &A). Returns the char back so the caller can check for \0 */
+{
+	if(c == '\r' || c == '\n')
+		printf("\r\n");
+	else if(c && c <= (char)26)	/* c is a control character */
+	{
+		putchar_unlocked((int)'&');
+		putchar_unlocked((int)(c+'A'-1));
+	}
+	else
+		putchar_unlocked((int)c);
+	return c;
+}
+int print_buffer(char *buf)
+/* Print a string using the print_char function */
+{
+	if(!buf)
+		return 0;
+	for(;*buf;buf++)
+	{
+		print_char(*buf);
+	}
+	return 1;
+}
 int next_char(char *c, int convert, int echo, struct state_spec *state)
 {
 	int status;
 	if(state->file)
 	{
 		status = (char)getc_unlocked(state->file);
+	}
+	else if(state->buffer_stack)
+	{
+		while(1)
+		{
+			struct buffer_pos *current_pos = state->buffer_stack;
+			current_pos->current_char++;
+			if(current_pos->current_char < state->buf_sizes[current_pos->buf_num])	/* We're still inside the buffer, just grab the next char */
+			{
+				status = state->aux_buffers[current_pos->buf_num][current_pos->current_char];
+				break;
+			}
+			else if(current_pos->current_char > state->buf_sizes[current_pos->buf_num])
+				return 0;
+			state->buffer_stack = current_pos->prev;
+			free(current_pos);
+			if(!(state->buffer_stack))
+			{
+				status = (char)getchar_unlocked();
+				break;
+			}
+		}
 	}
 	else
 	{
@@ -403,15 +466,15 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 			(*line)[*length] = c;
 			*length = *length+1;
 			if(c != 0x04 && echo)
-				printf("%c", c);
+				print_char(c);
 		}
 	}
 	else
 	{
 		(*line)[*length] = c;
 		*length = *length+1;
-		if(echo)
-			printf("%c", c);
+		if(c != 0x04 && echo)
+			print_char(c);
 	}
 }
 char get_flags(struct command_spec *command, struct state_spec *state)
@@ -428,7 +491,7 @@ char get_flags(struct command_spec *command, struct state_spec *state)
 		while(c >= '0' && c <= '9')
 		{
 			digit = 1;
-			printf("%c",c);
+			print_char(c);
 			n = n * 10 + c - '0';
 			command->num = n;
 			next_char(&c, 1, 0, state);
@@ -450,7 +513,7 @@ char get_flags(struct command_spec *command, struct state_spec *state)
 		}
 		else
 		{
-			printf("%c",c);
+			print_char(c);
 		}
 	}
 	return c;
@@ -532,19 +595,20 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 				default:
 					if(c == delim)
 					{
-						printf("%c",c);
+						if(c > 26)
+							print_char(c);
 						stop = 1;
 					}
 					else if(full)
 					{
 						if(c == 0x04)
 						{
-							printf("\r\n");
+							//printf("\r\n");
 							stop = 1;
+							//break;
 						}
 						else if(c == '\r')
 						{
-							printf("\n");
 							if(oneline)
 							{
 								stop = 1;
@@ -579,10 +643,14 @@ char **get_lines(int *length, int literal, struct state_spec *state)
 			buffer[buffer_length-2] = '\n';
 			one_line = malloc(sizeof(void*));
 			*one_line = buffer;
+			if(done)
+				printf("\r\n");
 			input_lines = (char**)replace_elements_in_vector((void**)(input_lines), length, (void**)one_line, 1, *length, 0);
 		}
 		else
+		{
 			free(buffer);
+		}
 	} while(!done);
 	return input_lines;
 }
@@ -655,7 +723,7 @@ struct command_spec* get_command(struct state_spec *state)
 				free_command_spec(command);
 				return NULL;
 			}
-			printf("%c",c);
+			print_char(c);
 		}
 		else if(c == '+' || c == '-')
 		{
@@ -668,7 +736,7 @@ struct command_spec* get_command(struct state_spec *state)
 			*line = new_line_spec(c,'c',0,NULL);
 			cmd_valid = 0;
 			compound_valid = 0;
-			printf("%c",c);
+			putchar_unlocked((int)c);
 		}
 		else if(c == '.' || c == '$')
 		{
@@ -693,11 +761,11 @@ struct command_spec* get_command(struct state_spec *state)
 				return NULL;
 			}
 			rel_valid = 0;
-			printf("%c",c);
+			putchar_unlocked((int)c);
 		}
 		else if(c == ':' || c == '[')
 		{
-			printf("%c",c);
+			putchar_unlocked((int)c);
 			if(*line == NULL)
 			{
 				*line = new_line_spec('+',c,0,NULL);
@@ -730,7 +798,7 @@ struct command_spec* get_command(struct state_spec *state)
 			compound_valid = 0;
 			second_addr = 1;
 			rel_valid = 1;
-			printf("%c",c);
+			putchar_unlocked((int)c);
 		}
 		else if((cmd_char_ptr = strchr(cmd_chars, c)))
 		/* Received a command character */
@@ -769,7 +837,6 @@ struct command_spec* get_command(struct state_spec *state)
 					do
 					{
 						next_char(&c, 0, 1, state);
-						if(c == '\n') {printf("\r");}
 					} while(c == ' ' || c == '\t' || c == '\n');
 					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
 				}
@@ -782,7 +849,8 @@ struct command_spec* get_command(struct state_spec *state)
 						return NULL;
 					}
 					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
-					printf(" FOR %c", c);
+					printf(" FOR ");
+					print_char(c);
 					get_string(&(command->arg2), NULL, c, 0, 1, 0, 1, state);
 					if(strlen(command->arg2) == 0)
 					{
@@ -796,7 +864,7 @@ struct command_spec* get_command(struct state_spec *state)
 					free_command_spec(command);
 					return NULL;
 				}
-				printf("%c", c);
+				print_char(c);
 			}
 		}
 		else {printf("%c", 0x07);}
@@ -899,7 +967,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			return 0;
 		}
 		state->dot = state->dot - 1;
-		printf("%s\r", state->main_buffer[state->dot]);
+		print_buffer(state->main_buffer[state->dot]);
 		break;
 	case '=':
 		printf("%i\r\n", line1);
@@ -909,9 +977,9 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		next_char(&c, 1, 1, state);
 		printf("\r\n");
 		if(c == 'Y')
-			sep = "\r\n\r";
+			sep = "\r\n";
 		else if(c == 'N')
-			sep = "\r";
+			sep = "";
 		else
 		{
 			err();
@@ -922,7 +990,8 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	case '\n':
 		for(i=line1; i<=line2; i++)
 		{
-			printf("%s%s", state->main_buffer[i], sep);
+			print_buffer(state->main_buffer[i]);
+			printf(sep);
 		}
 		state->dot = line2;
 		break;
@@ -950,9 +1019,13 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 				}
 				state->main_buffer[line1] = buffer;
 				state->dollar = state->dollar+1;
+				if(done)
+					printf("\r\n");
 			}
 			else
+			{
 				free(buffer);
+			}
 		} while(!done);
 		break;
 	case 'C':
@@ -1029,29 +1102,23 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			printf("%i\r\n", n);
 		break;
 	case 'J':
-		get_string(&buffer, &buffer_length, (char)4, 1, 1, 0, 0, state);
+		get_string(&buffer, &buffer_length, '\0', 1, 1, 0, 0, state);
+		buffer[buffer_length-2] = '\0';
+		if(buffer_length > 2 && buffer[buffer_length-3] != '\r')
+			printf("\r\n");
 		set_buffer(buffer_for_char(command->arg1[0]), buffer, state);
+		state->buf_sizes[buffer_for_char(command->arg1[0])] = buffer_length-1;
 		break;
 	case 'K':
 		kill_buffer(buffer_for_char(command->arg1[0]), state);
 		break;
 	case 'B':
 		if(state->aux_buffers[buffer_for_char(command->arg1[0])])
-			//printf("\"%s\"\r\n", state->aux_buffers[buffer_for_char(command->arg1[0])]);
-			{
-				char *buf = state->aux_buffers[buffer_for_char(command->arg1[0])];
-				char *c = buf;
-				printf("\"");
-				while(*c)
-				{
-					if(*c == '\r')
-						printf("\r\n");
-					else
-						printf("%c", *c);
-					c++;
-				}
-				printf("\"\r\n");
-			}
+		{
+			printf("\"");
+			print_buffer(state->aux_buffers[buffer_for_char(command->arg1[0])]);
+			printf("\"\r\n");
+		}
 		break;
 	case 'F':
 			return 1;
