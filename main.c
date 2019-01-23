@@ -965,18 +965,36 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 				free(buffer);
 		} while(!done);
 		break;
-	case 'D':
-		length = state->dollar+1;
-		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), NULL, 0, line1, line2-line1+1);
-		state->dollar = length-1;
-		state->dot = line1-1;
-		break;
 	case 'C':
 		input_lines = get_lines(&input_length, 0, state);
 		length = state->dollar+1;
 		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), (void**)input_lines, input_length, line1, line2-line1+1);
 		state->dollar = length-1;
 		state->dot = line1 + input_length - 1;
+		break;
+	case 'L':
+	case 'G':
+		length = line2-line1+1;
+		buffer_length = 1; //length for the newlines and 1 for the terminating \0
+		for (i=line1; i<=line2; i++)
+		{
+			buffer_length += strlen(state->main_buffer[i]);
+		}
+		buffer = malloc(buffer_length);
+		buffer[0] = '\0';
+		for(int i=line1; i<=line2; i++)
+		{
+			strcat(buffer, state->main_buffer[i]);
+			buffer[strlen(buffer)-1] = '\r';
+		}
+		set_buffer(buffer_for_char(command->arg1[0]), buffer, state);
+		if (command->command == 'L')
+			break;
+	case 'D':
+		length = state->dollar+1;
+		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), NULL, 0, line1, line2-line1+1);
+		state->dollar = length-1;
+		state->dot = line1-1;
 		break;
 	case 'R':
 		if(!(state->file = fopen(command->arg1, "r")))
