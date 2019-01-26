@@ -71,7 +71,7 @@ void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo);
 char get_flags(struct command_spec *command, struct state_spec *state);
 void get_buffer_name(struct command_spec *command, struct state_spec *state);
-void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, struct state_spec *state);
+void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state);
 char **get_lines(int *length, int literal, struct state_spec *state);
 struct command_spec* get_command(struct state_spec *state);
 int resolve_line_spec(struct line_spec *line, struct state_spec *state);
@@ -195,16 +195,17 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 	{
 		char *found;
 		char *old_str = state->main_buffer[line];
-		old_str_length = strlen(old_str);
 		int made_sub = 0, start_from = 0;
 		while((found = strstr(old_str+start_from, find)))
 		{
 			char *new_str;
 			int pos = found-old_str;
 			start_from = pos + replace_length;
+			old_str_length = strlen(old_str);
+			new_str_length = old_str_length - find_length + replace_length;
 			if(num >= 0 &&num_subs >= num)
 				return num_subs;
-			new_str = malloc(old_str_length - find_length + replace_length);
+			new_str = malloc(new_str_length+1);
 			new_str[0] = '\0';
 			strncat(new_str, old_str, pos);
 			if(mode == 'W' || mode == 'V')
@@ -255,8 +256,8 @@ int substitute(char *replace, char *find, int start, int end, char mode, int num
 					continue;
 				}
 			}
-			strcat(new_str, replace);
-			strcat(new_str, found+find_length);
+			strncat(new_str, replace, new_str_length);
+			strncat(new_str, found+find_length, new_str_length);
 			free(old_str);
 			state->main_buffer[line] = old_str = new_str;
 			num_subs++;
@@ -370,7 +371,7 @@ char print_char(char c)
 {
 	if(c == '\r' || c == '\n')
 		printf("\r\n");
-	else if(c && c <= (char)26)	/* c is a control character */
+	else if(c && c <= (char)26 && c != '\t')	/* c is a control character */
 	{
 		putchar_unlocked((int)'&');
 		putchar_unlocked((int)(c+'A'-1));
@@ -565,7 +566,7 @@ void get_buffer_name(struct command_spec *command, struct state_spec *state)
 		command->arg1[1] = '\0';
 	}
 }
-void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, struct state_spec *state)
+void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state)
 {
 	char c;
 	int newstr = 1;
@@ -573,6 +574,9 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 	int buf_size = BUF_INCREMENT;
 	int my_length;
 	int status;
+	int oldpos = 0;
+	int oldlen = 0;
+	if(oldline) {oldlen = strlen(oldline);}
 	if(!length) {length = &my_length;}
 	*str = malloc(buf_size+1);
 	*length = 0;
@@ -628,7 +632,61 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 					add_char_to_buffer(str, length, &buf_size, c, unlimited, !literal);
 					break;
 				default:
-					if(c == delim)
+					if(oldline)
+					{
+						switch(c)
+						{
+							int found;
+							char findchar;
+							case 0x03:	/* Ctrl-C (next char) */
+								if(oldpos < oldlen-1)
+									add_char_to_buffer(str, length, &buf_size, oldline[oldpos], unlimited, 1);
+								else
+									putchar_unlocked(7);	/* Ring bell */
+								oldpos++;
+								break;
+							case 0x08:	/* Ctrl-H (copy rest of line) */
+							case 0x04:	/* Ctrl-D (copy rest of line and terminate) */
+								while(oldpos<oldlen-1)
+								{
+									add_char_to_buffer(str, length, &buf_size, oldline[oldpos], unlimited, 1);
+									oldpos++;
+								}
+								if (c == 0x08)
+									break;
+							case '\r':
+								stop = 1;
+								add_char_to_buffer(str, length, &buf_size, '\n', unlimited, 1);
+								break;
+							case 0x0F: 	/* Ctrl-O (copy until character) */
+							case 0x1A:	/* Ctrl-Z (copy through character) */
+								next_char(&findchar, 0, 0, 0, state);
+								found = oldpos+(c == 0x0F);	/* start at oldpos for ctrl-z, oldpos+1 for ctrl-o */
+								while (found < oldlen)
+								{
+									if(oldline[found] == findchar)
+										break;
+									found++;
+								}
+								if(found >= oldlen-1)
+									putchar_unlocked(7);
+								else
+								{
+									if(c == 0x0F)
+										found--;
+									while(oldpos <= found)
+									{
+										add_char_to_buffer(str, length, &buf_size, oldline[oldpos], unlimited, 1);
+										oldpos++;
+									}
+								}
+								break;
+							default:
+								add_char_to_buffer(str, length, &buf_size, c, unlimited, 1);
+								oldpos++;
+						}
+					}
+					else if(c == delim)
 					{
 						if(c > 26)
 							print_char(c);
@@ -670,7 +728,7 @@ char **get_lines(int *length, int literal, struct state_spec *state)
 	int done = 0;
 	*length = 0;
 	do {
-		get_string(&buffer, &buffer_length, '\0', 1, 1, literal, 1, state);
+		get_string(&buffer, &buffer_length, '\0', 1, 1, literal, 1, NULL, state);
 		if(buffer[buffer_length-2] == 0x04)
 			done = 1;
 		if(buffer[0] != 0x04)
@@ -804,18 +862,18 @@ struct command_spec* get_command(struct state_spec *state)
 			if(*line == NULL)
 			{
 				*line = new_line_spec('+',c,0,NULL);
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, state);
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, NULL, state);
 			}
 			else if((*line)->type == 'c')
 			{
 				(*line)->type = c;
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, state);
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, NULL, state);
 			}
 			else
 			{
 				line = &((*line)->next);
 				*line = new_line_spec('+',c,0,NULL);
-				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, state);
+				get_string(&((*line)->search),&((*line)->line), c=='['?']':c, 0, c=='[', 0, 1, NULL, state);
 			}
 			rel_valid = 0;
 			compound_valid = 1;
@@ -873,7 +931,7 @@ struct command_spec* get_command(struct state_spec *state)
 					{
 						next_char(&c, 0, 1, 0, state);
 					} while(c == ' ' || c == '\t' || c == '\n');
-					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
+					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, NULL, state);
 				}
 				else if(c == 'S')
 				{
@@ -883,10 +941,10 @@ struct command_spec* get_command(struct state_spec *state)
 						free_command_spec(command);
 						return NULL;
 					}
-					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, state);
+					get_string(&(command->arg1), NULL, c, 0, 1, 0, 1, NULL, state);
 					printf(" FOR ");
 					print_char(c);
-					get_string(&(command->arg2), NULL, c, 0, 1, 0, 1, state);
+					get_string(&(command->arg2), NULL, c, 0, 1, 0, 1, NULL, state);
 					if(strlen(command->arg2) == 0)
 					{
 						free_command_spec(command);
@@ -1040,7 +1098,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		if(!command->start && command->command != 'I')
 			line1 = state->dollar;
 		do {
-			get_string(&buffer, &length, '\0', 1, 1, 0, 1, state);
+			get_string(&buffer, &length, '\0', 1, 1, 0, 1, NULL, state);
 			if(buffer[length-2] == 0x04)
 				done = 1;
 			if(buffer[0] != 0x04)
@@ -1069,6 +1127,21 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), (void**)input_lines, input_length, line1, line2-line1+1);
 		state->dollar = length-1;
 		state->dot = line1 + input_length - 1;
+		break;
+	case 'E':
+	case 'M':
+		for(int line=line1; line<=line2; line++)
+		{
+			if(command->command == 'E')
+				print_buffer(state->main_buffer[line]);
+			get_string(&buffer, &buffer_length, '\0', 1, 1, 0, 1, state->main_buffer[line], state);
+			input_lines = malloc(sizeof(char*));
+			input_lines[0] = buffer;
+			length = state->dollar+1;
+			state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &(length), (void**)input_lines, 1, line, 1);
+			state->dollar = length-1;
+			state->dot = line;
+		}
 		break;
 	case 'L':
 	case 'G':
@@ -1138,7 +1211,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			printf("%i\r\n", n);
 		break;
 	case 'J':
-		get_string(&buffer, &buffer_length, '\0', 1, 1, 0, 0, state);
+		get_string(&buffer, &buffer_length, '\0', 1, 1, 0, 0, NULL, state);
 		buffer[buffer_length-2] = '\0';
 		if(buffer_length > 2 && buffer[buffer_length-3] != '\r')
 			printf("\r\n");
