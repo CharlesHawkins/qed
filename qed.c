@@ -71,7 +71,7 @@ void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int
 void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unlimited, int echo);
 char get_flags(struct command_spec *command, struct state_spec *state);
 void get_buffer_name(struct command_spec *command, struct state_spec *state);
-void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state);
+int get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state);
 char **get_lines(int *length, int literal, struct state_spec *state);
 struct command_spec* get_command(struct state_spec *state);
 int resolve_line_spec(struct line_spec *line, struct state_spec *state);
@@ -136,7 +136,7 @@ void err(struct state_spec *state)
 int buffer_for_char(char c)
 {
 	if(isdigit(c))
-		return (int)c;
+		return (int)c-'0';
 	else if(isalpha(c))
 		return c-'A'+10;
 	else
@@ -153,6 +153,7 @@ void set_buffer(int buffer_num, char *text, struct state_spec *state)
 {
 	kill_buffer(buffer_num, state);
 	state->aux_buffers[buffer_num] = text;
+	state->buf_sizes[buffer_num] = strlen(text);
 }
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state)
 {
@@ -566,7 +567,7 @@ void get_buffer_name(struct command_spec *command, struct state_spec *state)
 		command->arg1[1] = '\0';
 	}
 }
-void get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state)
+int get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state)
 {
 	char c;
 	int newstr = 1;
@@ -576,6 +577,7 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 	int status;
 	int oldpos = 0;
 	int oldlen = 0;
+	int insert = 0;
 	if(oldline) {oldlen = strlen(oldline);}
 	if(!length) {length = &my_length;}
 	*str = malloc(buf_size+1);
@@ -647,9 +649,10 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 								break;
 							case 0x08:	/* Ctrl-H (copy rest of line) */
 							case 0x04:	/* Ctrl-D (copy rest of line and terminate) */
+							case 0x06:	/* Ctrl-F (copy rest of line, no typing, and terminate) */
 								while(oldpos<oldlen-1)
 								{
-									add_char_to_buffer(str, length, &buf_size, oldline[oldpos], unlimited, 1);
+									add_char_to_buffer(str, length, &buf_size, oldline[oldpos], unlimited, (c != 0x06));
 									oldpos++;
 								}
 								if (c == 0x08)
@@ -681,9 +684,45 @@ void get_string(char **str, int *length, char delim, int full, int unlimited, in
 									}
 								}
 								break;
+							case 0x13:	/* Ctrl-S (skip character) */
+								if(oldpos<oldlen-1)
+								{
+									oldpos++;
+									print_char('%');
+								}
+								else
+								{
+									putchar_unlocked(7);
+								}
+								break;
+							case 0x05:	/* Ctrl-E (toggle insert mode) */
+								print_char(insert?'>':'<');
+								insert = !insert;
+								break;
+							case 0x0E:	/* Ctrl-N (delete character, restorative) */
+								if(*length)
+								{
+									*length = *length-1;
+								}
+								printf("%s", up_arrow);
+								if(!(*length))
+								{
+									printf("\r\n");
+								}
+								if(oldpos > 0)
+									oldpos--;
+								break;
+							case 0x12:	/* Ctrl-R (type rest of old line, then new line, old aligned with old) */
+								putchar_unlocked((int)'\n');
+								print_buffer(oldline+oldpos);
+								print_char('\n');
+								print_buffer(*str);
+								break;
+								break;
 							default:
 								add_char_to_buffer(str, length, &buf_size, c, unlimited, 1);
-								oldpos++;
+								if (oldpos < oldlen-1 && !insert)
+									oldpos++;
 						}
 					}
 					else if(c == delim)
@@ -1084,7 +1123,7 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		for(i=line1; i<=line2; i++)
 		{
 			print_buffer(state->main_buffer[i]);
-			printf(sep);
+			printf("%s", sep);
 		}
 		state->dot = line2;
 		break;
