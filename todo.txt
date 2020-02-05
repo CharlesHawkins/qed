@@ -1,0 +1,13 @@
+To fix:
+- ^Q only deletes one line. Make it able to delete more
+- SUBSTITUTE seems to sometimes copy the current line elsewhere in the document (fixed)
+- Buffer calls should not print the output resulting from calling the buffer
+
+To implement:
+- TABS
+- QUICK and VERBOSE
+- The special buffer control key, ^L
+- The quote control-character, ^K
+- The re-type and re-edit characters, ^R, ^T, and ^Y
+- WRITE OUT
+- -c in place of @CONTINUE

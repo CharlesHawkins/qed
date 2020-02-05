@@ -715,7 +715,7 @@ int get_string(char **str, int *length, char delim, int full, int unlimited, int
 							case 0x12:	/* Ctrl-R (type rest of old line, then new line, old aligned with old) */
 								putchar_unlocked((int)'\n');
 								print_buffer(oldline+oldpos);
-								print_char('\n');
+								//print_char('\n');
 								print_buffer(*str);
 								break;
 								break;
