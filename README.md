@@ -5,7 +5,8 @@ This is a c implementation I made for fun, and isn't completely finished yet. I 
 
 To get into the spirit of things, I wrote it entirely using ed and, as it matured, qed itself (with less sometimes used to look at the code).
 
-####Compiling and Running####
+#### Compiling and Running
+
 It requires no external libraries apart from ones that come with c. You can compile it with:
 
 	cc qed.c -o qed
@@ -20,4 +21,5 @@ It does assume you have a Unicode-compatible terminal to render the up-arrow and
 
 Apart from these, I have not implemented any features not found in the manual or the article.
 
+#### Other QED Sources and Projects
 I started this project in 2015, forgot about it for a few years, then picked it up again in early 2019. In the interim some original sources for different versions of QED were published online, collected in the [QED archive](https://github.com/arnoldrobbins/qed-archive). These include assembly for the version I've been attempting to reproduce here. Once I've gotten this project to a point where it is (I think) feature complete, I might take a look (if I can find a reference on SDS-930 assembly), but as it stands this project is not based on that code. There is also a modern port of QED [by Leah Neukirchen](https://github.com/chneukirchen/qed-caltech), but from the name and documentation it is of a later QED editor than the one I'm targetting here.
