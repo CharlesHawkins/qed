@@ -10,15 +10,15 @@
 #include <ctype.h>
 
 
-const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00};
+const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00}; /* Unicode left-arrow glyph */
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
-const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW";
-char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "};
-char *cmd_strings_quick[26] = {"\"", "/", "=", "", "", "\r\n", "\r\n", "A", "B", "C", "D", "E", "F", "G", "I", "J", "K", "L", "M", "P", "Q", "R", "S", "T", "V", "W"};
-const int cmd_addrs[26] = {0, 2, 1, 0, 1, 2, 2, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2};
-const char *cmd_noconf = "\"/=^<\n\r";
+const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW"; /* Characters typed by the user for each command */
+char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "}; /* Sequences typed by qed for each command in VERBOSE mode */
+char *cmd_strings_quick[26] = {"\"", "/", "=", "", "", "\r\n", "\r\n", "A", "B", "C", "D", "E", "F", "G", "I", "J", "K", "L", "M", "P", "Q", "R", "S", "T", "V", "W"}; /* Sequences typed by qed for each command in QUICK mode */
+const int cmd_addrs[26] = {0, 2, 1, 0, 1, 2, 2, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2}; /* The number of addresses taken by each command (same order as above) */
+const char *cmd_noconf = "\"/=^<\n\r"; /* Commands on this list are executed immediately, without the user typing a confirming . */ 
 const char *cmd_noaddr = "\"BFJKQTV";
-const int BUF_INCREMENT = 30;
+const int BUF_INCREMENT = 30; /* When a buffer runs out of space, we'll increase its size by this many characters */
 
 /* Structure specifying the current state of the program, including the contents of the main and numbered buffers,
 the current and last lines (dot and dollar), the file read from, and whether we're in quick mode. */
@@ -53,7 +53,8 @@ struct line_spec {
 	struct line_spec *next;
 };
 
-/* Structure containing the stack of buffers currently being read from. Base pointer is to the current / innermost buffer, *prev points to the one outside of that (i.e. to be returned to when this one is done), and so on. */
+/* Because a buffer can itself contain buffer calls, including to the same buffer, we need a stack of buffers we're executing from, including the buffer and position within each buffer for each stack entry
+ * This structure contains the stack of buffers currently being read from. Base pointer is to the current / innermost buffer, *prev points to the one outside of that (i.e. to be returned to when this one is done), and so on. If the base pointer is NULL it means we are just executing from stdin */
 struct buffer_pos {
 	int current_char;
 	int buf_num;
@@ -89,6 +90,7 @@ int main(int argc, char **argv)
 	struct state_spec *state;
 	struct line_spec *ls;
 	int finished = 0;
+	/* qed runs in terminal raw mode, so that characters typed by the user aren't echoed and so that we can do \r and \n separately when needed */
 	struct termios qed_term_settings;
 	struct termios original_term_settings;
 	tcgetattr(fileno(stdin), &original_term_settings);
@@ -128,12 +130,14 @@ int main(int argc, char **argv)
 }
 
 void err(struct state_spec *state)
+/* Called when there's any kind of error in a command. Prints out "?" and clears the stack of buffer execution. The manual suggests using the latter behavior as a form of flow control */
 {
 	printf("?\r\n");
 	free_buffer_stack(state->buffer_stack);
 	state->buffer_stack = NULL;
 }
 int buffer_for_char(char c)
+/* Converts from a buffer name (one alphanumeric character) to the buffer number, indicating where in our array of buffers that buffer is stored */
 {
 	if(isdigit(c))
 		return (int)c-'0';
@@ -143,6 +147,7 @@ int buffer_for_char(char c)
 		return -1;
 }
 void kill_buffer(int buffer_num, struct state_spec *state)
+/* Executes the KILL buffer command, clearing the contents of the given-numbered buffer */
 {
 	if(state->aux_buffers[buffer_num])
 		free(state->aux_buffers[buffer_num]);
@@ -150,12 +155,14 @@ void kill_buffer(int buffer_num, struct state_spec *state)
 	state->buf_sizes[buffer_num] = 0;
 }
 void set_buffer(int buffer_num, char *text, struct state_spec *state)
+/* Sets the contents of the given-numbered buffer to the given text, such as by the JAM INTO command */
 {
 	kill_buffer(buffer_num, state);
 	state->aux_buffers[buffer_num] = text;
 	state->buf_sizes[buffer_num] = strlen(text);
 }
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state)
+/* Implements the behavior of searches [] and tag searches :: bu searching for the given string in the main buffer, starting from the given line and wrapping */
 {
 	int i;
 	char *found;
@@ -188,6 +195,7 @@ int find_string(char *search, int start_line, int is_tag, struct state_spec *sta
 	return 0;
 }
 int substitute(char *replace, char *find, int start, int end, char mode, int num, struct state_spec *state)
+/* Implements the SUBSTITUTE command */
 {
 	int old_str_length, replace_length, find_length, new_str_length = 0, done = 0, line, num_subs = 0;
 	replace_length = strlen(replace);
@@ -316,6 +324,7 @@ void free_line_spec(struct line_spec *ls)
 	free(ls);
 }
 struct line_spec *new_line_spec(char sign, char type, int line, char *search)
+/* Constructor for line specifiers */
 {
 	struct line_spec *ls = malloc(sizeof(struct line_spec));
 	ls->sign = sign;
@@ -393,6 +402,7 @@ int print_buffer(char *buf)
 	return 1;
 }
 int next_char(char *c, int convert, int echo, int ctl_v, struct state_spec *state)
+/* Read the next character from file, buffer, or stdin. Used when reading into a buffer of any kind, such as APPEND/INSERT/CHANGE, EDIT/MODIFY, JAM INTO, and searches/SUBSTITUTE */
 {
 	int status;
 	if(state->file)
@@ -515,6 +525,7 @@ void add_char_to_buffer(char **line, int *length, int *buf_size, char c, int unl
 	}
 }
 char get_flags(struct command_spec *command, struct state_spec *state)
+/* Called when we're expecting flags for the SUBSTITUTE command; reads them in and sets the flag member variable in the command spec */
 {
 	char c;
 	do{
@@ -556,6 +567,7 @@ char get_flags(struct command_spec *command, struct state_spec *state)
 	return c;
 }
 void get_buffer_name(struct command_spec *command, struct state_spec *state)
+/* Called when we're expecting a buffer name, such as with JAM INTO. Reads it in and sets the arg1 of command to a string containing that character */
 {
 	char c;
 	next_char(&c, 1, 0, 0, state);
@@ -568,6 +580,7 @@ void get_buffer_name(struct command_spec *command, struct state_spec *state)
 	}
 }
 int get_string(char **str, int *length, char delim, int full, int unlimited, int literal, int oneline, char *oldline, struct state_spec *state)
+/* Gets a line of text from the user / buffer / file. Used by INSERT, APPEND, CHANGE, EDIT, and MODIFY, along with READ FROM. Handles all the special control characters for EDIT/MODIFY, and the smaller array of control characters for the others */
 {
 	char c;
 	int newstr = 1;
@@ -759,6 +772,7 @@ int get_string(char **str, int *length, char delim, int full, int unlimited, int
 	*length = *length+1;
 }
 char **get_lines(int *length, int literal, struct state_spec *state)
+/* Gets multiple lines of text for APPEND/INSERT/CHANGE/EDIT/MODIFY/READ FROM by calling get_string() repeatedly */
 {
 	char **input_lines = NULL;
 	char *buffer = NULL;
@@ -787,6 +801,7 @@ char **get_lines(int *length, int literal, struct state_spec *state)
 	return input_lines;
 }
 struct command_spec* get_command(struct state_spec *state)
+/* Reads a command from stdin/a buffer and decodes it into a command_spec struct. Returns NULL if there is an error while reading the command */
 {
 	char c = '\0';
 	int done = 0;
@@ -816,7 +831,7 @@ struct command_spec* get_command(struct state_spec *state)
 			exit(1);
 		}
 		c = convert_esc(c, state);
-		if(c == 0x7F)
+		if(c == 0x7F) /* Received a backspace ("rubout"). Pressing it twice cancels the command */
 		{
 			if(rubout_pressed)
 			{
@@ -1004,6 +1019,7 @@ struct command_spec* get_command(struct state_spec *state)
 	return command;
 }
 int resolve_line_spec(struct line_spec *line, struct state_spec *state)
+/* Given a line_spec struct, which may involve searches, relative offsets, etc., resolves it to an actual line number */
 {
 	int line_number = 0, first = 1;
 	if(!state || !(state->main_buffer))
@@ -1051,6 +1067,7 @@ int resolve_line_spec(struct line_spec *line, struct state_spec *state)
 		return line_number;
 }
 int execute_command(struct command_spec *command, struct state_spec *state)
+/* Takes a command_spec struct, generated by get_command(), and executes it on the current state */
 {
 	int line1 = state->dot, line2 = state->dot;
 	char *sep = "\r";
