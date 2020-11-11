@@ -162,7 +162,7 @@ void set_buffer(int buffer_num, char *text, struct state_spec *state)
 	state->buf_sizes[buffer_num] = strlen(text);
 }
 int find_string(char *search, int start_line, int is_tag, struct state_spec *state)
-/* Implements the behavior of searches [] and tag searches :: bu searching for the given string in the main buffer, starting from the given line and wrapping */
+/* Implements the behavior of searches [] and tag searches :: by searching for the given string in the main buffer, starting from the given line and wrapping */
 {
 	int i;
 	char *found;
@@ -725,11 +725,17 @@ int get_string(char **str, int *length, char delim, int full, int unlimited, int
 								if(oldpos > 0)
 									oldpos--;
 								break;
+							case 0x14:      /* Ctrl-T (type rest of old line, then new line, old aligned with new */
 							case 0x12:	/* Ctrl-R (type rest of old line, then new line, old aligned with old) */
 								putchar_unlocked((int)'\n');
+								if (c == 0x14) {
+									putchar_unlocked((int)'\r');
+									for (int i = 0; i < *length; i++) {putchar_unlocked((int)' ');}
+								}
 								print_buffer(oldline+oldpos);
 								//print_char('\n');
-								print_buffer(*str);
+								//print_buffer(*str);
+								for (int i = 0; i < *length; i++) {putchar_unlocked((*str)[i]);}
 								break;
 								break;
 							default:
@@ -770,6 +776,7 @@ int get_string(char **str, int *length, char delim, int full, int unlimited, int
 	} while(!stop);
 	(*str)[*length] = '\0';
 	*length = *length+1;
+	return 0;
 }
 char **get_lines(int *length, int literal, struct state_spec *state)
 /* Gets multiple lines of text for APPEND/INSERT/CHANGE/EDIT/MODIFY/READ FROM by calling get_string() repeatedly */
