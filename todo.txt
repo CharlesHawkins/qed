@@ -1,6 +1,5 @@
 To fix:
 - ^Q only deletes one line. Make it able to delete more
-- SUBSTITUTE seems to sometimes copy the current line elsewhere in the document (fixed)
 - Buffer calls should not print the output resulting from calling the buffer
 
 To implement:

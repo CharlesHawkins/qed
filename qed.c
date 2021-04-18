@@ -19,6 +19,7 @@ const int cmd_addrs[26] = {0, 2, 1, 0, 1, 2, 2, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2,
 const char *cmd_noconf = "\"/=^<\n\r"; /* Commands on this list are executed immediately, without the user typing a confirming . */ 
 const char *cmd_noaddr = "\"BFJKQTV";
 const int BUF_INCREMENT = 30; /* When a buffer runs out of space, we'll increase its size by this many characters */
+const int NUM_AUX_BUFS = 36; /* Number of aux buffers. They are named 0-9 and A-Z, so 36 in total */
 
 /* Structure specifying the current state of the program, including the contents of the main and numbered buffers,
 the current and last lines (dot and dollar), the file read from, and whether we're in quick mode. */
@@ -82,6 +83,7 @@ struct line_spec *new_line_spec(char sign, char type, int line, char *search);
 void free_line_spec(struct line_spec *ls);
 void free_command_spec(struct command_spec *cmd);
 void free_buffer_stack(struct buffer_pos *stack);
+void free_state_spec(struct state_spec *state);
 char print_char(char c);
 int print_buffer(char *buf);
 int main(int argc, char **argv)
@@ -101,10 +103,10 @@ int main(int argc, char **argv)
 
 	state = malloc(sizeof(struct state_spec));
 	state->main_buffer = calloc(sizeof(int*), 1);
-	state->aux_buffers = calloc(sizeof(char*), 36);
-	state->buf_sizes = calloc(sizeof(int*), 36);
-	memset(state->aux_buffers, 0, sizeof(char*) * 36);
-	memset(state->buf_sizes, 0, sizeof(int*) * 36);
+	state->aux_buffers = calloc(sizeof(char*), NUM_AUX_BUFS);
+	state->buf_sizes = calloc(sizeof(int*), NUM_AUX_BUFS);
+	memset(state->aux_buffers, 0, sizeof(char*) * NUM_AUX_BUFS);
+	memset(state->buf_sizes, 0, sizeof(int*) * NUM_AUX_BUFS);
 	state->dollar = 0;
 	state->dot = 0;
 	state->file = NULL;
@@ -125,6 +127,7 @@ int main(int argc, char **argv)
 		}
 	} while(!finished);
 
+	free_state_spec(state);
 	tcsetattr(fileno(stdin), TCSANOW, &original_term_settings);
 	return 0;
 }
@@ -362,6 +365,24 @@ void free_buffer_stack(struct buffer_pos *stack)
 		free_buffer_stack(stack->prev);
 		free(stack);
 	}
+}
+void free_state_spec(struct state_spec *state)
+{
+	for(int i = 0; i <= state->dollar; i++)
+	{
+		free(state->main_buffer[i]);
+	}
+	free(state->main_buffer);
+	for(int i = 0; i < NUM_AUX_BUFS; i++)
+	{
+		free(state->aux_buffers[i]);
+	}
+	free(state->aux_buffers);
+	free(state->buf_sizes);
+	if (state->file)
+		free(state->file);
+	free_buffer_stack(state->buffer_stack);
+	free(state);
 }
 int increase_buffer(char **buffer, size_t *size)
 /* Allocates more space for the buffer. Why I didn't just use realloc() I'm not sure... */
@@ -774,8 +795,7 @@ int get_string(char **str, int *length, char delim, int full, int unlimited, int
 			}
 		}
 	} while(!stop);
-	(*str)[*length] = '\0';
-	*length = *length+1;
+	add_char_to_buffer(str, length, &buf_size, '\0', 1, 0);
 	return 0;
 }
 char **get_lines(int *length, int literal, struct state_spec *state)
