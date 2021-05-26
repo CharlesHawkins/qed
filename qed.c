@@ -13,8 +13,9 @@
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00}; /* Unicode left-arrow glyph */
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW"; /* Characters typed by the user for each command */
-char *cmd_strings[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "}; /* Sequences typed by qed for each command in VERBOSE mode */
+char *cmd_strings_verbose[26] = {"\"", "/", "=", "↑", "←", "\r\n", "\r\n", "APPEND", "BUFFER #", "CHANGE", "DELETE", "EDIT", "FINISHED", "GET #", "INSERT", "JAM INTO #", "KILL #", "LOAD #", "MODIFY", "PRINT", "QUICK", "READ FROM ", "SUBSTITUTE ", "TABS", "VERBOSE", "WRITE ON "}; /* Sequences typed by qed for each command in VERBOSE mode */
 char *cmd_strings_quick[26] = {"\"", "/", "=", "", "", "\r\n", "\r\n", "A", "B", "C", "D", "E", "F", "G", "I", "J", "K", "L", "M", "P", "Q", "R", "S", "T", "V", "W"}; /* Sequences typed by qed for each command in QUICK mode */
+char **cmd_strings = cmd_strings_verbose;
 const int cmd_addrs[26] = {0, 2, 1, 0, 1, 2, 2, 1, 0, 2, 2, 2, 0, 2, 1, 0, 0, 2, 2, 2, 0, 1, 2, 0, 0, 2}; /* The number of addresses taken by each command (same order as above) */
 const char *cmd_noconf = "\"/=^<\n\r"; /* Commands on this list are executed immediately, without the user typing a confirming . */ 
 const char *cmd_noaddr = "\"BFJKQTV";
@@ -1311,6 +1312,12 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			print_buffer(state->aux_buffers[buffer_for_char(command->arg1[0])]);
 			printf("\"\r\n");
 		}
+		break;
+	case 'V':
+		cmd_strings = cmd_strings_verbose;
+		break;
+	case 'Q':
+		cmd_strings = cmd_strings_quick;
 		break;
 	case 'F':
 			return 1;

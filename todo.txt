@@ -4,7 +4,6 @@ To fix:
 
 To implement:
 - TABS
-- QUICK and VERBOSE
 - The special buffer control key, ^L
 - The quote control-character, ^K
 - The re-type and re-edit characters, ^R, ^T, and ^Y
