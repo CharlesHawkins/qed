@@ -23,7 +23,6 @@ Apart from these, I have not implemented any features not found in the manual or
 
 #### To do
 Here's a rough list of things that I haven't finished implementing yet:
-* The QUICK / VERBOSE commands. Currently it's effectively locked in VERBOSE mode
 * The TABS command that sets the tab stops. Currently it just inserts ^I tabs when the user presses the tab key. The original appears to have only supported indentation via spaces; if you wanted an actual tab you'd have to do ^V+tab
 * The ^K editing key that puts in "comments", i.e. keeps echoing the user's keystrokes but doesn't put them into the buffer until the user presses ^K again
 * The ^L special buffer key that copies subsequently-entered text into buffer 1 (I almost thought, given that the command is ^L, that the buffer it used was the letter "ell" not the digit "one" - the two characters are indistinguishable in the typewriter font the manual is written in - but then remembered that QED did not print lower-case letters so in the examples shown in the manual it would have printed #L and not #l if that was the buffer being addressed)
