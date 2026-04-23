@@ -24,7 +24,7 @@ Apart from these, I have not implemented any features not found in the manual or
 #### To do
 Here's a rough list of things that I haven't finished implementing yet:
 * The TABS command that sets the tab stops. Currently it just inserts ^I tabs when the user presses the tab key. The original appears to have only supported indentation via spaces; if you wanted an actual tab you'd have to do ^V+tab
-* The ^K editing key that puts in "comments", i.e. keeps echoing the user's keystrokes but doesn't put them into the buffer until the user presses ^K again
+* The ^K editing key that toggles no-insert mode, i.e. keeps echoing the user's keystrokes and affecting the position in the line being edited but doesn't put any characters into the new line until the user presses ^K again
 * The ^L special buffer key that copies subsequently-entered text into buffer 1 (I almost thought, given that the command is ^L, that the buffer it used was the letter "ell" not the digit "one" - the two characters are indistinguishable in the typewriter font the manual is written in - but then remembered that QED did not print lower-case letters so in the examples shown in the manual it would have printed #L and not #l if that was the buffer being addressed)
 * The ^Y key to re-edit the current line
 * In edit mode, ^Q is supposed to restore the original line as it was; it doesn't do this yet, it just deletes the line you've typed the same as in insert mode
@@ -32,5 +32,11 @@ Here's a rough list of things that I haven't finished implementing yet:
 * It needs to print WRITE OUT! if you quit without saving
 * I need to implement my -c replacement for @CONTINUE as mentioned above
 * Buffer calls are not supposed to echo the buffer contents to the terminal, but they currently do
+* Negative addresses are supposed to be converted to 1; currently they are rejected
+* When asking the user "DOUBLE?" as part of the PRINT command, QED should expand their Y or N response to YES or NO
+* After executing READ FROM, QED should type the number of "words" read. The manual helpfully states that one "word" is approximately 3 characters. WRITE ON should have similar output. I assume "words" is in the memory sense here, so I may just have it print out bytes instead
+* QED is supposed to recognize all editing control characters when performing APPEND, INSERT, or CHANGE, but treat the line being edited as blank. Currently it ignores any control characters that reference the line being edited when in these modes
+* The ^P and ^X control characters perform their functions but also echo &P/&X into the buffer, which they obviously shouldn't do
+* The ignore-characters mode engaged by typing a double-quote
 #### Other QED Sources and Projects
 I started this project in 2015, forgot about it for a few years, then picked it up again in early 2019. In the interim some original sources for different versions of QED were published online, collected in the [QED archive](https://github.com/arnoldrobbins/qed-archive). These include assembly for the version I've been attempting to reproduce here. Once I've gotten this project to a point where it is (I think) feature complete, I might take a look (if I can find a reference on SDS-930 assembly), but as it stands this project is not based on that code. There is also a modern port of QED [by Leah Neukirchen](https://github.com/chneukirchen/qed-caltech), but from the name and documentation it is of a later QED editor than the one I'm targetting here.
