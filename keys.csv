@@ -1,0 +1,25 @@
+Character,Function
+^BC,Call buffer C
+^I,Tab
+^M,Newline
+^VC,Literal character C
+^A,Backspace
+^W,Backspace word
+^Q,Backspace a line
+^N,Backspace restorative
+^C,Copy character
+^U,Copy to tab
+^H,Copy to end of line
+^OC,Copy to next C
+^ZC,Copy through next C
+^D,Copy rest of line and terminate
+^F,Copy rest of line without typing
+^S,Skip character
+^PC,Skip up to next C
+^XC,Skip through next C
+^R,Fast retype
+^T,Aligned retype
+^Y,Re-edit line
+^E,Toggle insert/replace mode
+^K,Toggle no-append mode
+^L,Toggle special buffer mode

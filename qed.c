@@ -10,6 +10,7 @@
 #include <ctype.h>
 
 
+const char *dumpfile = "/tmp/qed-dump";
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00}; /* Unicode left-arrow glyph */
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW"; /* Characters typed by the user for each command */
@@ -32,6 +33,7 @@ struct state_spec {
 	int dollar;
 	FILE *file;
 	int quick;
+	int wrote_out;
 	struct buffer_pos *buffer_stack;
 };
 /* Complete command specifier, including starting and ending lines, the command, 0-2 arguments, flags */
@@ -87,6 +89,8 @@ void free_buffer_stack(struct buffer_pos *stack);
 void free_state_spec(struct state_spec *state);
 char print_char(char c);
 int print_buffer(char *buf);
+void dump_state(struct state_spec *state);
+struct state_spec* restore_state();
 int main(int argc, char **argv)
 {
 	struct command_spec *command;
@@ -112,6 +116,7 @@ int main(int argc, char **argv)
 	state->dot = 0;
 	state->file = NULL;
 	state->quick = 0;
+	state->wrote_out = 1;
 	state->buffer_stack = NULL;
 	do
 	{
@@ -127,6 +132,9 @@ int main(int argc, char **argv)
 			printf("\r\n");
 		}
 	} while(!finished);
+	if (!state->wrote_out) {
+		printf("WRITE OUT!\r\n");
+	}
 
 	free_state_spec(state);
 	tcsetattr(fileno(stdin), TCSANOW, &original_term_settings);
@@ -1324,5 +1332,6 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	default:
 		printf("[not implemented yet]\r\n");
 	}
+	state->wrote_out = (command->command == 'W');
 	return 0;
 }
