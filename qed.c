@@ -11,6 +11,7 @@
 
 
 const char *dumpfile = "/tmp/qed-dump";
+const int dumprev = 1;
 const char up_arrow[4] = {0xE2, 0x86, 0x91, 0x00}; /* Unicode left-arrow glyph */
 const char left_arrow[4] = {0xE2, 0x86, 0x90, 0x00};
 const char *cmd_chars = "\"/=^<\n\rABCDEFGIJKLMPQRSTVW"; /* Characters typed by the user for each command */
@@ -97,6 +98,14 @@ int main(int argc, char **argv)
 	struct state_spec *state;
 	struct line_spec *ls;
 	int finished = 0;
+	int cont_flag = 0;
+	for (int i=1; i<argc; i++)
+	{
+		if (!strcmp(argv[i], "-c"))
+		{
+			cont_flag = 1;
+		}
+	}
 	/* qed runs in terminal raw mode, so that characters typed by the user aren't echoed and so that we can do \r and \n separately when needed */
 	struct termios qed_term_settings;
 	struct termios original_term_settings;
@@ -106,18 +115,29 @@ int main(int argc, char **argv)
 	tcsetattr(fileno(stdin), TCSANOW, &qed_term_settings);
 	setbuf(stdout,NULL);
 
-	state = malloc(sizeof(struct state_spec));
-	state->main_buffer = calloc(sizeof(int*), 1);
-	state->aux_buffers = calloc(sizeof(char*), NUM_AUX_BUFS);
-	state->buf_sizes = calloc(sizeof(int*), NUM_AUX_BUFS);
-	memset(state->aux_buffers, 0, sizeof(char*) * NUM_AUX_BUFS);
-	memset(state->buf_sizes, 0, sizeof(int*) * NUM_AUX_BUFS);
-	state->dollar = 0;
-	state->dot = 0;
-	state->file = NULL;
-	state->quick = 0;
-	state->wrote_out = 1;
-	state->buffer_stack = NULL;
+	if(cont_flag)
+	{
+		state = restore_state();
+		if (!state)
+		{
+			return 1;
+		}
+	}
+	else
+	{
+		state = malloc(sizeof(struct state_spec));
+		state->main_buffer = calloc(sizeof(int*), 1);
+		state->aux_buffers = calloc(sizeof(char*), NUM_AUX_BUFS);
+		state->buf_sizes = calloc(sizeof(int*), NUM_AUX_BUFS);
+		memset(state->aux_buffers, 0, sizeof(char*) * NUM_AUX_BUFS);
+		memset(state->buf_sizes, 0, sizeof(int*) * NUM_AUX_BUFS);
+		state->dollar = 0;
+		state->dot = 0;
+		state->file = NULL;
+		state->quick = 0;
+		state->wrote_out = 1;
+		state->buffer_stack = NULL;
+	}
 	do
 	{
 		command = get_command(state);
@@ -136,6 +156,7 @@ int main(int argc, char **argv)
 		printf("WRITE OUT!\r\n");
 	}
 
+	dump_state(state);
 	free_state_spec(state);
 	tcsetattr(fileno(stdin), TCSANOW, &original_term_settings);
 	return 0;
@@ -1334,4 +1355,98 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 	}
 	state->wrote_out = (command->command == 'W');
 	return 0;
+}
+void dump_state(struct state_spec *state)
+{
+	FILE *statefile;
+	if (!(statefile = fopen(dumpfile, "w")))
+	{
+		err(state);
+		return;
+	}
+	// Write signature
+	fwrite("QED", 1, 3, statefile);
+	// Write dumpfile format revision number
+	fwrite(&dumprev, 1, sizeof(int), statefile);
+	// Write dot and dollar
+	fwrite(&state->dot, 1, sizeof(int), statefile);
+	fwrite(&state->dollar, 1, sizeof(int), statefile);
+	fwrite(&state->quick, 1, sizeof(int), statefile);
+	// Write the aux buffers
+	for(int i=0; i<NUM_AUX_BUFS; i++)
+	{
+		fwrite(&state->buf_sizes[i], 1, sizeof(int), statefile);
+		if (state->buf_sizes[i] > 0)
+		{
+			fwrite(state->aux_buffers[i], state->buf_sizes[i], 1, statefile);
+		}
+	}
+	for(int i = 1; i <= state->dollar; i++)
+	{
+		fprintf(statefile, "%s", state->main_buffer[i]);
+	}
+}
+struct state_spec* restore_state()
+{
+	FILE *statefile;
+	if (!(statefile = fopen(dumpfile, "r")))
+	{
+		printf("IO-ERROR.\r\nCould not read continue file at %s\r\n", dumpfile);
+		return NULL;
+	}
+	char *sig = malloc(4);
+	bzero(sig, 4);
+	fread(sig, 3, 1, statefile);
+	if (strcmp(sig, "QED"))
+	{
+		printf("Invalid signature in continue file\r\n");
+		return NULL;
+	}
+	int f_rev = 0;
+	fread(&f_rev, 1, sizeof(int), statefile);
+	struct state_spec *state = malloc(sizeof(struct state_spec));
+	//printf("%i\r\n", f_rev);
+	if(f_rev != dumprev)
+	{
+		printf("Incorrect continue file version (found %i, expected %i)\r\n", f_rev, dumprev);
+		return NULL;
+	}
+	fread(&state->dot, 1, sizeof(int), statefile);
+	fread(&state->dollar, 1, sizeof(int), statefile);
+	fread(&state->quick, 1, sizeof(int),statefile);
+	//printf(".=%i; $=%i; q=%i\r\n", state->dot, state->dollar, state->quick);
+	state->aux_buffers = calloc(sizeof(char*), NUM_AUX_BUFS);
+	state->buf_sizes = calloc(sizeof(int*), NUM_AUX_BUFS);
+	for(int i=0; i < NUM_AUX_BUFS; i++)
+	{
+		int bsize = 0;
+		fread(&bsize, 1, sizeof(int), statefile);
+		//printf("B%i: %i bytes\r\n", i, bsize);
+		state->buf_sizes[i] = bsize;
+		if (!bsize)
+		{
+			continue;
+		}
+		state->aux_buffers[i] = malloc(bsize+1);
+		int j;
+		if ((j = fread(state->aux_buffers[i], 1, bsize, statefile)) < bsize)
+		{
+			printf("EOF encountered while loading buffer %i from continue file(expected %i, got %i)\r\n", i, bsize, j);
+			return NULL;
+		}
+		state->aux_buffers[i][bsize] = '\0';
+	}
+	state->file = statefile;
+	state->main_buffer = calloc(sizeof(int*), 1);
+	int input_length = 0;
+	int length = 1;
+	char **lines = get_lines(&input_length, 1, state);
+	fclose(statefile);
+	state->file = NULL;
+	state->dollar = 1;
+	state->main_buffer = (char**)replace_elements_in_vector((void**)(state->main_buffer), &state->dollar, (void**)lines, input_length, 1, 0);
+	state->dollar -= 1;
+	state->wrote_out = 1;
+	state->buffer_stack = NULL;
+	return state;
 }
