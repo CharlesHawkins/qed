@@ -819,8 +819,10 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 								break;
 							case 0x0F: 	/* Ctrl-O (copy until character) */
 							case 0x1A:	/* Ctrl-Z (copy through character) */
+							case 0x10:  /* Ctrl-P (Skip until character) */
+							case 0x18:  /* Ctrl-X (Skip through character) */
 								next_char(&findchar, 0, 0, 0, state);
-								found = oldpos+(c == 0x0F);	/* start at oldpos for ctrl-z, oldpos+1 for ctrl-o */
+								found = oldpos+(c == 0x0F || c == 0x10);	/* start at oldpos for ctrl-z, oldpos+1 for ctrl-o */
 								while (found < refline->length)
 								{
 									if(refline->buf[found] == findchar)
@@ -831,11 +833,14 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 									putchar_unlocked(7);
 								else
 								{
-									if(c == 0x0F)
+									if(c == 0x0F || c == 0x10)
 										found--;
 									while(oldpos <= found)
 									{
-										add_char_to_string(str, refline->buf[oldpos], unlimited, 1, skip_mode, ctrl_l_buffer);
+										if(c == 0x0F || c == 0x1A)
+											add_char_to_string(str, refline->buf[oldpos], unlimited, 1, skip_mode, ctrl_l_buffer);
+										else
+											print_char('%');
 										oldpos++;
 									}
 								}
