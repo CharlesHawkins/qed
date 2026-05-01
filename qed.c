@@ -963,7 +963,7 @@ struct command_spec* get_command(struct state_spec *state)
 			}
 			print_char(c);
 		}
-		else if(c == '+' || c == '-')
+		else if(c == '+' || c == '-' || c == ' ')
 		{
 			if(*line == NULL || !compound_valid)
 			{
@@ -971,7 +971,7 @@ struct command_spec* get_command(struct state_spec *state)
 				return NULL;
 			}
 			line = &((*line)->next);
-			*line = new_line_spec(c,'c',0,NULL);
+			*line = new_line_spec(c==' '?'+':c,'c',0,NULL);
 			cmd_valid = 0;
 			compound_valid = 0;
 			putchar_unlocked((int)c);
