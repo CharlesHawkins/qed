@@ -27,7 +27,6 @@ Here's a rough list of things that I haven't finished implementing yet:
 * The TABS command that sets the tab stops. Currently it just inserts ^I tabs when the user presses the tab key. The original appears to have only supported indentation via spaces; if you wanted an actual tab you'd have to do ^V+tab
 * The ^K editing key that toggles no-insert mode, i.e. keeps echoing the user's keystrokes and affecting the position in the line being edited but doesn't put any characters into the new line until the user presses ^K again
 * The ^L special buffer key that copies subsequently-entered text into buffer 1 (I almost thought, given that the command is ^L, that the buffer it used was the letter "ell" not the digit "one" - the two characters are indistinguishable in the typewriter font the manual is written in - but then remembered that QED did not print lower-case letters so in the examples shown in the manual it would have printed #L and not #l if that was the buffer being addressed)
-* The ^Y key to re-edit the current line
 * ^Q is supposed to be able to delete multiple lines if you keep pressing it; currently it will only clear the current line
 * Buffer calls are not supposed to echo the buffer contents to the terminal, but they currently do
 * Negative addresses are supposed to be converted to 1; currently they are rejected
