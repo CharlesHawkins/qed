@@ -756,7 +756,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 									add_char_to_string(str, oldline->buf[oldpos], unlimited, (c != 0x06));
 									oldpos++;
 								}
-								if (c == 0x08)
+								if (c == 0x08 || c == 0x06)
 									break;
 							case '\r':
 								stop = 1;
