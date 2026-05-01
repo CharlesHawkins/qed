@@ -116,7 +116,7 @@ int substitute(struct string *replace, struct string *find, int start, int end, 
 char convert_esc(char c, struct state_spec *state);
 int next_char(char *c, int convert, int echo, int ctl_v, struct state_spec *state);
 void **replace_elements_in_vector(void **dest, int *dest_length, void **src, int src_length, int pos, int num);
-void add_char_to_string(struct string *str, char c, int realloc, int echo);
+void add_char_to_string(struct string *str, char c, int realloc, int echo, int skip, struct string *lbuf);
 char get_flags(struct command_spec *command, struct state_spec *state);
 void get_buffer_name(struct command_spec *command, struct state_spec *state);
 int get_string(struct string *str, char delim, int full, int unlimited, int literal, int oneline, struct string *oldline, struct state_spec *state);
@@ -602,9 +602,17 @@ struct string *replace_elements_in_string_vector(struct string *dest, int *dest_
 	*dest_length = new_length;
 	return dest;
 }
-void add_char_to_string(struct string *str, char c, int reallocate, int echo)
+void add_char_to_string(struct string *str, char c, int reallocate, int echo, int skip, struct string *lbuf)
 /* Adds the character c to the string str. If unlimited is true, the buffer will be reallocated if needed to make room for the new character; otherwise characters past the end are silently dropped. */
 {
+	if(lbuf)
+		add_char_to_string(lbuf, c, 1, 0, 0, NULL);
+	if(skip)
+	{
+		if(c != 0x04 && echo)
+			print_char(c);
+		return;
+	}
 	if(str->length >= str->space)
 	{
 		if(reallocate)
@@ -679,6 +687,15 @@ void get_buffer_name(struct command_spec *command, struct state_spec *state)
 		command->arg1.buf[0] = c;
 	}
 }
+void finish_l_buffer(struct string **ctrl_l_buffer, struct state_spec *state)
+{
+	if ((*ctrl_l_buffer)->buf[(*ctrl_l_buffer)->length-1] == 0x04)
+		(*ctrl_l_buffer)->length--;
+	(*ctrl_l_buffer)->buf[(*ctrl_l_buffer)->length] = 0;
+	set_buffer(1, (*ctrl_l_buffer), state);
+	free((*ctrl_l_buffer));
+	(*ctrl_l_buffer) = NULL;
+}
 int get_string(struct string *str, char delim, int full, int unlimited, int literal, int oneline, struct string *oldline, struct state_spec *state)
 /* Gets a line of text from the user / buffer / file. Used by INSERT, APPEND, CHANGE, EDIT, and MODIFY, along with READ FROM. Handles all the special control characters for EDIT/MODIFY, and the smaller array of control characters for the others */
 {
@@ -687,6 +704,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 	int status;  /* Status of the last call to next_char, indicating whether a character was successfully gotten. Will be 0 if we've reached the end of the file or buffer we're taking input from */
 	int oldpos = 0;  /* Cursor position in the old line */
 	int insert = 0;  /* Whether insert mode is on, causing typed characters to be inserted in EDIT/MODIFY rather than overwriting the old line */
+	int skip_mode = 0;  /* Ctrl-K mode where no chars are added */
 	struct string *ctrl_l_buffer = NULL;  /* Special buffer for the Ctrl-L command */
 	struct string *refline = oldline?copy_string(NULL, oldline, 0):new_string();
 	empty_string(str);
@@ -697,11 +715,11 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 		if(!status)
 		{
 			stop = 1;
-			add_char_to_string(str, 0x04, unlimited, !literal);
+			add_char_to_string(str, 0x04, unlimited, !literal, skip_mode, ctrl_l_buffer);
 		}
 		else if(literal)
 		{
-			add_char_to_string(str, c, unlimited, !literal);
+			add_char_to_string(str, c, unlimited, !literal, skip_mode, ctrl_l_buffer);
 			stop = (c == '\n');
 		}
 		else
@@ -743,7 +761,24 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 					break;
 				case 0x16:	/* Ctrl-V (Literal Character) */
 					status = next_char(&c, 0, 0, 1, state);
-					add_char_to_string(str, c, unlimited, !literal);
+					add_char_to_string(str, c, unlimited, !literal, skip_mode, ctrl_l_buffer);
+					break;
+				case 0x0c:     /* Ctrl-L (special buffer) */
+					if (ctrl_l_buffer)
+					{
+						printf("]");
+						finish_l_buffer(&ctrl_l_buffer, state);
+					}
+					else
+					{
+						printf("[");
+						kill_buffer(1, state);
+						ctrl_l_buffer = empty_string(NULL);
+					}
+					break;
+				case 0x0b:  /* Ctrl-K mode; no chars added */
+					printf("\"");
+					skip_mode = !skip_mode;
 					break;
 				default:
 					if(refline->buf)
@@ -754,7 +789,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 							char findchar;
 							case 0x03:	/* Ctrl-C (next char) */
 								if(oldpos < refline->length-1)
-									add_char_to_string(str, refline->buf[oldpos], unlimited, 1);
+									add_char_to_string(str, refline->buf[oldpos], unlimited, 1, skip_mode, ctrl_l_buffer);
 								else
 									putchar_unlocked(7);	/* Ring bell */
 								oldpos++;
@@ -765,12 +800,12 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 							case 0x06:	/* Ctrl-F (copy rest of line, no typing, and terminate) */
 								while(oldpos<refline->length-1)
 								{
-									add_char_to_string(str, refline->buf[oldpos], unlimited, (c != 0x06 && c != 0x19));
+									add_char_to_string(str, refline->buf[oldpos], unlimited, (c != 0x06 && c != 0x19), skip_mode, ctrl_l_buffer);
 									oldpos++;
 								}
 								if (c == 0x19)
 								{
-									add_char_to_string(str, '\n', unlimited, 1);
+									add_char_to_string(str, '\n', unlimited, 1, 0, ctrl_l_buffer);
 									str->buf[str->length] = '\0';
 									copy_string(refline, str, 0);
 									empty_string(str);
@@ -780,7 +815,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 									break;
 							case '\r':
 								stop = 1;
-								add_char_to_string(str, '\n', unlimited, 1);
+								add_char_to_string(str, '\n', unlimited, 1, 0, ctrl_l_buffer);
 								break;
 							case 0x0F: 	/* Ctrl-O (copy until character) */
 							case 0x1A:	/* Ctrl-Z (copy through character) */
@@ -800,7 +835,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 										found--;
 									while(oldpos <= found)
 									{
-										add_char_to_string(str, refline->buf[oldpos], unlimited, 1);
+										add_char_to_string(str, refline->buf[oldpos], unlimited, 1, skip_mode, ctrl_l_buffer);
 										oldpos++;
 									}
 								}
@@ -847,7 +882,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 								break;
 								break;
 							default:
-								add_char_to_string(str, c, unlimited, 1);
+								add_char_to_string(str, c, unlimited, 1, skip_mode, ctrl_l_buffer);
 								if (oldpos < refline->length-1 && !insert)
 									oldpos++;
 						}
@@ -873,17 +908,19 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 								stop = 1;
 							}
 						}
-						add_char_to_string(str, c, unlimited, !literal);
+						add_char_to_string(str, c, unlimited, !literal, skip_mode && c != '\r' && c != 0x04, ctrl_l_buffer);
 					}
 					else
 					{
-						add_char_to_string(str, c, unlimited, !literal);
+						add_char_to_string(str, c, unlimited, !literal, skip_mode, ctrl_l_buffer);
 					}
 			}
 		}
 	} while(!stop);
 	//bg_string(str);
-	add_char_to_string(str, '\0', 1, 0);
+	if(ctrl_l_buffer)
+		finish_l_buffer(&ctrl_l_buffer, state);
+	add_char_to_string(str, '\0', 1, 0, 0, NULL);
 	str->length--;
 	free_string(refline);
 	return 0;
