@@ -1393,12 +1393,21 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			line1 = state->dollar;
 		line1++;
 		input_lines = get_lines(&num_lines, 1, state);
+		int num_bytes = 0;
+		for (int i = 0; i < num_lines; i++)
+		{
+			num_bytes += input_lines[i].length;
+		}
+		int num_words = num_bytes / 3;
+		if (num_bytes % 3)
+			num_words++;
 		state->dollar++;
 		state->main_buffer = replace_elements_in_string_vector(state->main_buffer, &state->dollar, input_lines, num_lines, line1, 0);
 		state->dollar--;
 		state->dot = line1 + num_lines - 1;
 		fclose(state->file);
 		state->file = NULL;
+		printf("%i WORDS.\r\n", num_words);
 		break;
 	case 'W':
 		if(!(state->file = fopen(command->arg1.buf, "w")))
@@ -1412,12 +1421,18 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 			line1 = 1;
 			line2 = state->dollar;
 		}
+		int bytes_written = 0;
 		for(i = line1; i <= line2; i++)
 		{
 			fprintf(state->file, "%s", state->main_buffer[i].buf);
+			bytes_written += state->main_buffer[i].length;
 		}
 		fclose(state->file);
 		state->file = NULL;
+		int words_written = bytes_written/3;
+		if (bytes_written%3)
+			words_written++;
+		printf("%i WORDS.\r\n", words_written);
 		break;
 	case 'S':
 		n = substitute(&command->arg1, &command->arg2, line1, line2, command->flag, command->num, state);

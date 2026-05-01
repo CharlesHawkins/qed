@@ -29,7 +29,6 @@ Here's a rough list of things that I haven't finished implementing yet:
 * ^Q is supposed to be able to delete multiple lines if you keep pressing it; currently it will only clear the current line
 * Buffer calls are not supposed to echo the buffer contents to the terminal, but they currently do
 * Negative addresses are supposed to be converted to 1; currently they are rejected
-* After executing READ FROM, QED should type the number of "words" read. The manual helpfully states that one "word" is approximately 3 characters. WRITE ON should have similar output. I assume "words" is in the memory sense here, so I may just have it print out bytes instead
 * QED is supposed to recognize all editing control characters when performing APPEND, INSERT, or CHANGE, but treat the line being edited as blank. Currently it ignores any control characters that reference the line being edited when in these modes
 * The ignore-characters mode engaged by typing a double-quote
 #### Other QED Sources and Projects
