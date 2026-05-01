@@ -1630,7 +1630,7 @@ struct string *read_string_from_file(struct string *s, int length, FILE *f)
 		s->buf = realloc(s->buf, length+1);
 		s->space = length;
 	}
-	s->length = fread(s->buf, length, 1, f);
+	s->length = fread(s->buf, 1, length, f);
 	s->buf[s->length] = '\0';
 	return s;
 }
