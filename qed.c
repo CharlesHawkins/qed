@@ -729,6 +729,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 				case 0x11:	/* Ctrl-Q (Delete Line) */
 					printf("%s\r\n",left_arrow);
 					str->length = 0;
+					oldpos = 0;
 					break;
 				case 0x16:	/* Ctrl-V (Literal Character) */
 					status = next_char(&c, 0, 0, 1, state);
