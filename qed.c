@@ -503,9 +503,9 @@ int next_char(char *c, int convert, int echo, int ctl_v, struct state_spec *stat
 		int buf_num = buffer_for_char(toupper(b));
 		if(buf_num == -1)
 		{
-			err(state);
+			printf("?");
 			*c = '\0';
-			return 0;
+			return next_char(c, convert, echo, 0, state);
 		}
 		if(state->aux_buffers[buf_num].length)
 		{
@@ -914,7 +914,8 @@ struct command_spec* get_command(struct state_spec *state)
 	printf("*");
 	do
 	{
-		if(!next_char(&c, 0, 0, 0, state))
+		int s;
+		if(!(s = next_char(&c, 0, 0, 0, state)))
 		/* Input stream has closed! Complain and exit. */
 		{
 			err(state);
