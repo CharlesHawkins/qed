@@ -25,10 +25,9 @@ Apart from these, I have not implemented any features not found in the manual or
 #### To do
 Here's a rough list of things that I haven't finished implementing yet:
 * The TABS command that sets the tab stops. Currently it just inserts ^I tabs when the user presses the tab key. The original appears to have only supported indentation via spaces; if you wanted an actual tab you'd have to do ^V+tab
-* The ^K editing key mostly works but can't yet be used to join lines
 * ^Q is supposed to be able to delete multiple lines if you keep pressing it; currently it will only clear the current line
 * Buffer calls are not supposed to echo the buffer contents to the terminal, but they currently do
-* Negative addresses are supposed to be converted to 1; currently they are rejected
+* Negative addresses are supposed to be converted to 1; this works for computed addresses currently but explicit negative addresses are rejected on input
 * QED is supposed to recognize all editing control characters when performing APPEND, INSERT, or CHANGE, but treat the line being edited as blank. Currently it ignores any control characters that reference the line being edited when in these modes
 * The ignore-characters mode engaged by typing a double-quote
 #### Other QED Sources and Projects

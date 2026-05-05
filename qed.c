@@ -120,6 +120,7 @@ void dbg_lines(struct string *lines, int n_lines, int start_at)
 		printf("\r\n");
 	}
 }
+void ring_bell() {putchar_unlocked(7);}
 void err(struct state_spec *state);
 struct string *new_string();
 struct string *empty_string(struct string *s);
@@ -135,6 +136,7 @@ int print_string(struct string *s);
 struct string *read_string_from_file(struct string *s, int length, FILE *f);
 int string_starts_with_char(struct string *s, char c);
 int string_ends_with_char(struct string *s, char c);
+void string_backspace(struct string *s);
 int buffer_for_char(char c);
 void kill_buffer(int buffer_num, struct state_spec *state);
 void set_buffer(int buffer_num, struct string *new_text, struct state_spec *state);
@@ -147,12 +149,10 @@ void add_char_to_string(struct string *str, char c, int realloc, int echo, int s
 char get_flags(struct command_spec *command, struct state_spec *state);
 void get_buffer_name(struct command_spec *command, struct state_spec *state);
 int get_string(struct string *str, char delim, int full, int unlimited, int literal, int oneline, struct string *oldline, struct state_spec *state);
-struct string *get_lines(int *length, int literal, struct state_spec *state);
 int main_buffer_text_entry(int insert_point, int num_lines_replaced, int edit_mode, int type_out, struct state_spec *state);
 struct command_spec* get_command(struct state_spec *state);
 int resolve_line_spec(struct line_spec *line, struct state_spec *state);
 int execute_command(struct command_spec *command, struct state_spec *state);
-int increase_buffer(char **buffer, size_t *size);
 struct line_spec *new_line_spec(char sign, char type, int line, struct string *search);
 void free_line_spec(struct line_spec *ls);
 void free_command_spec(struct command_spec *cmd);
@@ -162,6 +162,7 @@ char print_char(char c);
 int print_buffer(char *buf);
 void dump_state(struct state_spec *state);
 struct state_spec* restore_state();
+
 int main(int argc, char **argv)
 {
 	struct command_spec *command;
@@ -539,6 +540,13 @@ int next_char(char *c, int convert, int echo, int ctl_v, struct state_spec *stat
 		char b;
 		printf("#");
 		next_char(&b, 0, 1, 1, state);
+		if(b == '\\')
+		{
+			printf("\r\n");
+			dbg_lines(state->main_buffer, state->dollar+1, 1);
+			*c = '\0';
+			return next_char(c, convert, echo, 0, state);
+		}
 		int buf_num = buffer_for_char(toupper(b));
 		if(buf_num == -1)
 		{
@@ -820,7 +828,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 								if(oldpos < refline->length-1)
 									add_char_to_string(str, refline->buf[oldpos], unlimited, 1, skip_mode, ctrl_l_buffer);
 								else
-									putchar_unlocked(7);	/* Ring bell */
+									ring_bell();
 								oldpos++;
 								break;
 							case 0x08:	/* Ctrl-H (copy rest of line) */
@@ -844,7 +852,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 									break;
 							case '\r':
 								stop = 1;
-								add_char_to_string(str, '\n', unlimited, 1, 0, ctrl_l_buffer);
+								add_char_to_string(str, '\n', unlimited, 1, skip_mode, ctrl_l_buffer);
 								break;
 							case 0x0F: 	/* Ctrl-O (copy until character) */
 							case 0x1A:	/* Ctrl-Z (copy through character) */
@@ -859,7 +867,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 									found++;
 								}
 								if(found >= refline->length-1)
-									putchar_unlocked(7);
+									ring_bell();
 								else
 								{
 									if(c == 0x0F || c == 0x10)
@@ -882,7 +890,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 								}
 								else
 								{
-									putchar_unlocked(7);
+									ring_bell();
 								}
 								break;
 							case 0x05:	/* Ctrl-E (toggle insert mode) */
@@ -932,6 +940,8 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 						if(c == 0x04)
 						{
 							//printf("\r\n");
+							if(skip_mode)
+								add_char_to_string(str, 0xFF, unlimited, 0, 0, NULL);  /* 0xFF is a special case; it means terminate input but don't add a \n at the end */
 							stop = 1;
 							//break;
 						}
@@ -942,7 +952,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 								stop = 1;
 							}
 						}
-						add_char_to_string(str, c, unlimited, !literal, skip_mode && c != '\r' && c != 0x04, ctrl_l_buffer);
+						add_char_to_string(str, c, unlimited, !literal, skip_mode, ctrl_l_buffer);
 					}
 					else
 					{
@@ -977,29 +987,6 @@ struct string *get_lines_from_file(FILE *file, int *num_lines)
 		buffer.length = 0;
 		buffer.space = 0;
 	}
-	return input_lines;
-}
-struct string *get_lines(int *length, int literal, struct state_spec *state)
-/* Gets multiple lines of text for APPEND/INSERT/CHANGE/EDIT/MODIFY/READ FROM by calling get_string() repeatedly */
-{
-	struct string *input_lines = NULL;
-	struct string buffer = {0,0,NULL};
-	int done = 0;
-	*length = 0;
-	do {
-		get_string(&buffer, '\0', 1, 1, literal, 1, NULL, state);
-		if(buffer.buf[buffer.length-1] == 0x04)
-			done = 1;
-		if(buffer.buf[0] != 0x04)
-		{
-			buffer.buf[buffer.length-1] = '\n';
-			if(done)
-				printf("\r\n");
-			(*length)++;
-			input_lines = realloc(input_lines, (*length)*sizeof(struct string));
-			input_lines[*length-1] = buffer;
-		}
-	} while(!done);
 	return input_lines;
 }
 int main_buffer_text_entry(int insert_point, int num_lines_replaced, int edit_mode, int type_out, struct state_spec *state)
@@ -1055,13 +1042,32 @@ int main_buffer_text_entry(int insert_point, int num_lines_replaced, int edit_mo
 				printf("\r\n");
 				break;
 			}
+			else if(string_ends_with_char(current_in_line, 0xFF))
+			{
+				string_backspace(current_in_line);
+				printf("\r\n");
+				break;
+			}
 			else if (string_ends_with_char(current_in_line, '\r'))
 				current_in_line->buf[current_in_line->length-1] = '\n';
 			ref_line_n++;
 		}
 	}
-	/* Add the collected lines to the main buffer */
+	if(input_line_n >= 0)
+		current_in_line = &input_lines[input_line_n];
 	input_line_n++;  /* Go from index of last element to number of elements */
+	/* If the last line of input had its newline suppressed via Ctrl-K, we need to merge it with the next line in the main buffer (if there is one) */
+	if(input_line_n > 0 && !string_ends_with_char(current_in_line, '\n'))
+	{
+		if(last_line > state->dollar)
+			add_char_to_string(current_in_line, '\n', 1, 0, 0, NULL);
+		else
+		{
+			cat_strings(current_in_line, &state->main_buffer[last_line]);
+			num_lines_replaced++;
+		}
+	}
+	/* Add the collected lines to the main buffer */
 	state->dollar++;
 	state->main_buffer = replace_elements_in_string_vector(state->main_buffer, &state->dollar, input_lines, input_line_n, insert_point+1, num_lines_replaced);
 	state->dollar--;
@@ -1802,4 +1808,12 @@ struct string *read_string_from_file(struct string *s, int length, FILE *f)
 	s->length = fread(s->buf, 1, length, f);
 	s->buf[s->length] = '\0';
 	return s;
+}
+void string_backspace(struct string *s)
+/* Deletes the last char from the string s. No effect if s is null or empty */
+{
+	if(!s || !s->buf || !s->length)
+		return;
+	s->length--;
+	s->buf[s->length] = '\0';
 }
