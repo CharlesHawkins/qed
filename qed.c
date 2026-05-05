@@ -741,6 +741,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 	int oldpos = 0;  /* Cursor position in the old line */
 	int insert = 0;  /* Whether insert mode is on, causing typed characters to be inserted in EDIT/MODIFY rather than overwriting the old line */
 	int skip_mode = 0;  /* Ctrl-K mode where no chars are added */
+	int del_line = 0; /* Will be returned; indicates that Ctrl-Q was pressed on an empty line and therefore another line above this one should be deleted */
 	struct string *ctrl_l_buffer = NULL;  /* Special buffer for the Ctrl-L command */
 	struct string *refline = oldline?copy_string(NULL, oldline, 0):new_string();
 	if(!str || !str->buf)
@@ -793,6 +794,11 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 					break;
 				case 0x11:	/* Ctrl-Q (Delete Line) */
 					printf("%s\r\n",left_arrow);
+					if(str->length == 0)
+					{
+						del_line = 1;
+						stop = 1;
+					}
 					str->length = 0;
 					oldpos = 0;
 					break;
@@ -967,7 +973,7 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 	add_char_to_string(str, '\0', 1, 0, 0, NULL);
 	str->length--;
 	free_string(refline);
-	return 0;
+	return del_line;
 }
 struct string *get_lines_from_file(FILE *file, int *num_lines)
 /* Reads all (remaining) lines from the give FILE and places them into a newly-allocated string vector. <num_lines> is set to the number of lines read */
@@ -1026,6 +1032,7 @@ int main_buffer_text_entry(int insert_point, int num_lines_replaced, int edit_mo
 				input_line_n--;
 				ref_line_n--;
 			}
+			current_in_line = &input_lines[input_line_n];
 			empty_string(&input_lines[input_line_n]);
 		}
 		else
