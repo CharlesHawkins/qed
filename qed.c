@@ -38,7 +38,7 @@ const int FL_CONVERT = 64;
 /* Structure keeping track of a string buffer */
 struct string {
 	int length;
-	int space;
+	size_t space;
 	char *buf;
 };
 /* Structure specifying the current state of the program, including the contents of the main and numbered buffers,
@@ -88,19 +88,44 @@ void dbg_string(struct string *s)
 		printf("<NULL>");
 		return;
 	}
-	printf("<s:%i l:%i b:[", s->space, s->length);
+	printf("<s:%zu l:%i b:[", s->space, s->length);
 	if(!s->buf)
 		printf("NULL");
-	for(int i=0; i<=s->length; i++)
-		printf(" %02x",s->buf[i]);
-	printf(" ]>");
+	else
+	{
+		for(int i=0; i<=s->length; i++)
+			printf(" %02x",s->buf[i]);
+		if (s->length > 0 && s->buf[s->length] == '\0')
+		{
+			printf(" | \"");
+			for(int i=0; i<s->length; i++)
+			{
+				char c = s->buf[i];
+				if(c <= 0x1a)
+					printf("^%c", c+('A'-0x01));
+				else
+					printf("%c", c);
+			}
+			printf("\"");
+		}
+		printf(" ]>");
+	}
+}
+void dbg_lines(struct string *lines, int n_lines, int start_at)
+{
+	for(int i = start_at; i<n_lines; i++)
+	{
+		printf("%i: ", i);
+		dbg_string(&lines[i]);
+		printf("\r\n");
+	}
 }
 void err(struct state_spec *state);
 struct string *new_string();
 struct string *empty_string(struct string *s);
-struct string *string_with_capacity(struct string *s, int space);
+struct string *string_with_capacity(struct string *s, size_t space);
 struct string *string_from_cstring(struct string *s, char *cs);
-struct string *capture_cstring(struct string *s, char *cs, int space);
+struct string *capture_cstring(struct string *s, char *cs, size_t space);
 void delete_string(struct string *s);
 void free_string(struct string *s);
 struct string *copy_string(struct string *dst, struct string *src, int copy_space);
@@ -108,6 +133,8 @@ struct string *cat_slice(struct string *dst, struct string *src, int start, int 
 void cat_strings(struct string *s1, struct string *s2);
 int print_string(struct string *s);
 struct string *read_string_from_file(struct string *s, int length, FILE *f);
+int string_starts_with_char(struct string *s, char c);
+int string_ends_with_char(struct string *s, char c);
 int buffer_for_char(char c);
 void kill_buffer(int buffer_num, struct state_spec *state);
 void set_buffer(int buffer_num, struct string *new_text, struct state_spec *state);
@@ -121,6 +148,7 @@ char get_flags(struct command_spec *command, struct state_spec *state);
 void get_buffer_name(struct command_spec *command, struct state_spec *state);
 int get_string(struct string *str, char delim, int full, int unlimited, int literal, int oneline, struct string *oldline, struct state_spec *state);
 struct string *get_lines(int *length, int literal, struct state_spec *state);
+int main_buffer_text_entry(int insert_point, int num_lines_replaced, int edit_mode, int type_out, struct state_spec *state);
 struct command_spec* get_command(struct state_spec *state);
 int resolve_line_spec(struct line_spec *line, struct state_spec *state);
 int execute_command(struct command_spec *command, struct state_spec *state);
@@ -707,7 +735,8 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 	int skip_mode = 0;  /* Ctrl-K mode where no chars are added */
 	struct string *ctrl_l_buffer = NULL;  /* Special buffer for the Ctrl-L command */
 	struct string *refline = oldline?copy_string(NULL, oldline, 0):new_string();
-	empty_string(str);
+	if(!str || !str->buf)
+		empty_string(str);
 	do
 	{
 		//dbg_string(str);
@@ -930,11 +959,31 @@ int get_string(struct string *str, char delim, int full, int unlimited, int lite
 	free_string(refline);
 	return 0;
 }
+struct string *get_lines_from_file(FILE *file, int *num_lines)
+/* Reads all (remaining) lines from the give FILE and places them into a newly-allocated string vector. <num_lines> is set to the number of lines read */
+{
+	struct string *input_lines = NULL;
+	*num_lines = 0;
+	struct string buffer = {0,0,NULL};
+	while(1)
+	{
+		buffer.length = getline(&buffer.buf, &buffer.space, file);
+		if(buffer.length <= 0)
+			break;
+		(*num_lines)++;
+		input_lines = realloc(input_lines, (*num_lines)*sizeof(struct string));
+		input_lines[*num_lines-1] = buffer;
+		buffer.buf = NULL;
+		buffer.length = 0;
+		buffer.space = 0;
+	}
+	return input_lines;
+}
 struct string *get_lines(int *length, int literal, struct state_spec *state)
 /* Gets multiple lines of text for APPEND/INSERT/CHANGE/EDIT/MODIFY/READ FROM by calling get_string() repeatedly */
 {
 	struct string *input_lines = NULL;
-	struct string buffer;
+	struct string buffer = {0,0,NULL};
 	int done = 0;
 	*length = 0;
 	do {
@@ -952,6 +1001,71 @@ struct string *get_lines(int *length, int literal, struct state_spec *state)
 		}
 	} while(!done);
 	return input_lines;
+}
+int main_buffer_text_entry(int insert_point, int num_lines_replaced, int edit_mode, int type_out, struct state_spec *state)
+/* Gets text from the user for APPEND/INSERT/CHANGE/MODIFY/EDIT and puts it in the main buffer at the specified location <insert_point>. If <num_lines_replaced> is nonzero, the referenced lines are used as the "original line" in edit mode, and are replaced in CHANGE/MODIFY/EDIT. If type_out is true, the original lines are each typed out (used for EDIT mode). */
+{
+	int input_line_n = 0;
+	int ref_line_n = insert_point+1;
+	int last_line = insert_point+num_lines_replaced+1;
+	struct string *input_lines = malloc(sizeof(struct string));
+	struct string *ref_line = NULL;
+	empty_string(input_lines);
+	struct string *current_in_line = &input_lines[input_line_n];
+	while(1)
+	{
+		if(edit_mode && ref_line_n >= last_line)
+			break;
+		if(edit_mode)
+			ref_line = &(state->main_buffer[ref_line_n]);
+		/* If the previous input line is complete (ends with a newline), we need to start a new input line */
+		if(string_ends_with_char(current_in_line, '\n'))
+		{
+			input_line_n++;
+			input_lines = realloc(input_lines, (input_line_n+1)*sizeof(struct string));
+			current_in_line = &input_lines[input_line_n];
+			empty_string(current_in_line);
+		}
+		if(type_out && ref_line)
+		{
+			for(int i=0; i<ref_line->length; i++) {print_char(ref_line->buf[i]);}
+		}
+		int d = get_string(current_in_line, '\0', 1, 1, 0, 1, ref_line, state);
+		if (d)
+		{
+			delete_string(current_in_line);
+			if(input_line_n > 0)
+			{
+				input_line_n--;
+				ref_line_n--;
+			}
+			empty_string(&input_lines[input_line_n]);
+		}
+		else
+		{
+			/* Check for ctrl-d (end of input) */
+			if (string_starts_with_char(current_in_line, 0x04))
+			{
+				input_line_n--;
+				break;
+			}
+			else if (string_ends_with_char(current_in_line, 0x04))
+			{
+				current_in_line->buf[current_in_line->length-1] = '\n';
+				printf("\r\n");
+				break;
+			}
+			else if (string_ends_with_char(current_in_line, '\r'))
+				current_in_line->buf[current_in_line->length-1] = '\n';
+			ref_line_n++;
+		}
+	}
+	/* Add the collected lines to the main buffer */
+	input_line_n++;  /* Go from index of last element to number of elements */
+	state->dollar++;
+	state->main_buffer = replace_elements_in_string_vector(state->main_buffer, &state->dollar, input_lines, input_line_n, insert_point+1, num_lines_replaced);
+	state->dollar--;
+	state->dot = insert_point+input_line_n;
 }
 struct command_spec* get_command(struct state_spec *state)
 /* Reads a command from stdin/a buffer and decodes it into a command_spec struct. Returns NULL if there is an error while reading the command */
@@ -1304,57 +1418,23 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		state->dot = line2;
 		break;
 	case 'I':
-		if(command->start == NULL)
+		if(!command->start)
 			line1 = state->dot;
-		line1--;
-		/* Intentional Fallthrough */
+		main_buffer_text_entry(line1-1, 0, 0, 0, state);
+		break;
 	case 'A':
-		done = 0;
-		if(!command->start && command->command != 'I')
+		if(!command->start)
 			line1 = state->dollar;
-		do {
-			get_string(&buffer, '\0', 1, 1, 0, 1, NULL, state);
-			//dbg_string(&buffer);
-			if(buffer.buf[buffer.length-1] == 0x04)
-				done = 1;
-			if(buffer.buf[0] != 0x04)
-			{
-				state->dot = ++line1;
-				buffer.buf[buffer.length-1] = '\n';
-				state->main_buffer = realloc(state->main_buffer, sizeof(struct string) * (state->dollar+2));
-				for(i = state->dollar; i>=line1; i--)
-				{
-					state->main_buffer[i+1] = state->main_buffer[i];
-				}
-				state->main_buffer[line1] = buffer;
-				state->dollar++;
-				if(done)
-					printf("\r\n");
-			}
-			else
-				delete_string(&buffer);
-		} while(!done);
+		main_buffer_text_entry(line1, 0, 0, 0, state);
 		break;
 	case 'C':
-		input_lines = get_lines(&num_lines, 0, state);
-		state->dollar++;
-		state->main_buffer = replace_elements_in_string_vector(state->main_buffer, &state->dollar, input_lines, num_lines, line1, line2-line1+1);
-		free(input_lines);
-		state->dollar--;
-		state->dot = line1 + num_lines - 1;
+		main_buffer_text_entry(line1-1, line2-line1+1, 0, 0, state);
 		break;
 	case 'E':
+		main_buffer_text_entry(line1-1, line2-line1+1, 1, 1, state);
+		break;
 	case 'M':
-		for(int line=line1; line<=line2; line++)
-		{
-			if(command->command == 'E')
-				print_string(&state->main_buffer[line]);
-			get_string(&buffer, '\0', 1, 1, 0, 1, &state->main_buffer[line], state);
-			state->dollar++;
-			state->main_buffer = replace_elements_in_string_vector(state->main_buffer, &state->dollar, &buffer, 1, line, 1);
-			state->dollar--;
-			state->dot = line;
-		}
+		main_buffer_text_entry(line1-1, line2-line1+1, 1, 0, state);
 		break;
 	case 'L':
 	case 'G':
@@ -1392,7 +1472,8 @@ int execute_command(struct command_spec *command, struct state_spec *state)
 		if(!command->start)
 			line1 = state->dollar;
 		line1++;
-		input_lines = get_lines(&num_lines, 1, state);
+		input_lines = get_lines_from_file(state->file, &num_lines);
+		/* Calculate and output the number of "words" read (i.e. the number of words of memory the SDS-930 would have used to store the text) */
 		int num_bytes = 0;
 		for (int i = 0; i < num_lines; i++)
 		{
@@ -1556,7 +1637,7 @@ struct state_spec* restore_state()
 	state->file = statefile;
 	state->main_buffer = calloc(sizeof(struct string), 1);
 	int input_length = 0;
-	struct string *lines = get_lines(&input_length, 1, state);
+	struct string *lines = get_lines_from_file(state->file, &input_length);
 	fclose(statefile);
 	state->file = NULL;
 	state->dollar = 1;
@@ -1585,7 +1666,7 @@ struct string *empty_string(struct string *s)
 	s->buf = malloc(BUF_INCREMENT);
 	return s;
 }
-struct string *string_with_capacity(struct string *s, int space)
+struct string *string_with_capacity(struct string *s, size_t space)
 /* Creates a blank string with allocated capacity for the specified number of characters. One byte is added to hold the terminating \0. If s is null, a new string is allocated. Return value is s or the new string */
 {
 	if(!s)
@@ -1609,7 +1690,7 @@ struct string *string_from_cstring(struct string *s, char *cs)
 	strncpy(s->buf, cs, l);
 	return s;
 }
-struct string *capture_cstring(struct string *s, char *cs, int space)
+struct string *capture_cstring(struct string *s, char *cs, size_t space)
 /* Captures the c-string cs, making s its owner. A new string will be allocated if s is NULL. Returns s or the new string. If space is non-zero, it will be used for the "space" parameter for s (i.e. the allocation length-1); otherwise the length of cs will be assumed for this. If a non-zero value of space is provided, it is up to the caller to make sure it is accurate */
 {
 	if (!s)
@@ -1646,7 +1727,7 @@ struct string *copy_string(struct string *dst, struct string *src, int copy_spac
 {
 	if (!dst)
 		dst = new_string();
-	int dst_space = copy_space?src->space:src->length;
+	size_t dst_space = copy_space?src->space:src->length;
 	if(dst->buf)
 		free(dst->buf);
 	dst->buf = malloc(dst_space+1);
@@ -1668,7 +1749,7 @@ struct string *cat_slice(struct string *dst, struct string *src, int start, int 
 		cpy_length = max_length;
 	else
 		cpy_length = length;
-	int space_needed = src->length + cpy_length;
+	size_t space_needed = src->length + cpy_length;
 	if (space_needed > dst->space)
 	{
 		dst->buf = realloc(dst->buf, space_needed+1);
@@ -1697,6 +1778,16 @@ int print_string(struct string *s)
 	if (!s)
 		return 0;
 	return print_buffer(s->buf);
+}
+int string_starts_with_char(struct string *s, char c)
+/* Returns 1 if the string s exists and starts with the specified character */
+{
+	return s && s->length && s->buf[0] == c;
+}
+int string_ends_with_char(struct string *s, char c)
+/* Returns 1 if the string s exists and ends with the specified character */
+{
+	return s && s->length && s->buf[s->length-1] == c;
 }
 struct string *read_string_from_file(struct string *s, int length, FILE *f)
 /* Reads a string of length <length> into the string s from the file f. If s is NULL a new string will be allocated. The capacity of s will be expanded if needed. Returns s or the new string. If the file reached EOF before <length> bytes were read, s may be smaller then <length> */
